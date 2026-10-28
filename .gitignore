@@ -1,0 +1,85 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+
+# Secrets
+profiles/*.env
+config/*.env
+.env
+.env.*
+
+# Runtime databases
+database/*.db
+database/*.sqlite
+database/*.sqlite3
+
+# Logs
+logs/*
+!logs/.gitkeep
+
+# PDFs / generated files
+*.pdf
+output/
+inbox/
+
+# Local files
+.DS_Store
+
+# Local configuration
+config/*.json
+
+# Python packaging metadata
+*.egg-info/
+
+# Local backup files
+*.bak
+*.bak-*
+
+# Database backup files
+database/*.sqlite3.bak*
+database/*.db.bak*
+
+
+# Never commit local profile exports or historical source backups
+/profile.env
+profile.env
+*.bak
+*.bak-*
+*.backup-*
+*.before-*
+*.old
+
+# Python and test caches
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.tox/
+.nox/
+
+# Build and packaging artifacts
+build/
+dist/
+*.egg-info/
+
+# Local application state
+/database/
+/config/
+profiles/*.env
+profile.env
+.env
+.env.*
+*.sqlite
+*.sqlite3
+*.db
+*.pdf
+*.backup
+*.backup-*
+*.bak
+*.bak-*
+*.before-*
+*.old
+logs/*
+!logs/.gitkeep
