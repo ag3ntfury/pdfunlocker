@@ -68,31 +68,11 @@ VALID_STATUSES = {
 
 
 def database_path() -> Path:
-    # Preserve the existing database; prefer the configured location only
-    # when a PDF database already exists there.
-    legacy_path = Path.home() / "pdfunlocker" / "database" / "pdfunlocker.sqlite3"
-    config_file = Path.home() / ".pdfunlocker" / "config" / "config.json"
+    """Return only the configured database path; never silently select legacy data."""
+    from pdfunlocker.paths import DATABASE_DIR
 
-    configured_path = None
-    try:
-        import json
-        config = json.loads(config_file.read_text(encoding="utf-8"))
-        database_dir = config.get("database_directory")
-        if isinstance(database_dir, str) and database_dir.strip():
-            configured_path = Path(database_dir).expanduser() / "pdfunlocker.sqlite3"
-    except (OSError, ValueError, TypeError):
-        pass
-
-    if configured_path is not None and configured_path.is_file():
-        return configured_path
-
-    if legacy_path.is_file():
-        legacy_path.parent.mkdir(parents=True, exist_ok=True)
-        return legacy_path
-
-    path = configured_path.parent if configured_path is not None else legacy_path.parent
-    path.mkdir(parents=True, exist_ok=True)
-    return path / "pdfunlocker.sqlite3"
+    DATABASE_DIR.mkdir(parents=True, exist_ok=True)
+    return DATABASE_DIR / "pdfunlocker.sqlite3"
 
 
 def connect() -> sqlite3.Connection:

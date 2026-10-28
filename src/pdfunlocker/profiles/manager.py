@@ -5,8 +5,8 @@ import tempfile
 import re
 from pathlib import Path
 
-APP_DIR = Path.home() / ".pdfunlocker"
-PROFILES_DIR = APP_DIR / "profiles"
+from pdfunlocker.paths import APP_DIR, PROFILES_DIR
+
 SEQUENCE_FILE = PROFILES_DIR / "profile_sequence.txt"
 
 PROFILE_FIELDS = (

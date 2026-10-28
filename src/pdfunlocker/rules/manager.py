@@ -10,7 +10,7 @@ import shutil
 import yaml
 
 
-RULES_DIR = Path.home() / ".pdfunlocker" / "rules"
+from pdfunlocker.paths import RULES_DIR
 
 
 class RuleError(ValueError):

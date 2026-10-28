@@ -50,7 +50,9 @@ def ensure_schema() -> None:
 
 
 def profile_ids() -> list[int]:
-    profiles_dir = Path.home() / ".pdfunlocker" / "profiles"
+    from pdfunlocker.paths import PROFILES_DIR
+
+    profiles_dir = PROFILES_DIR
 
     ids: list[int] = []
 

@@ -2,18 +2,23 @@ from __future__ import annotations
 
 import argparse
 import json
+from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 
-VERSION = "0.1.0"
+from pdfunlocker.paths import (
+    APP_DIR,
+    CONFIG_DIR,
+    CONFIG_FILE,
+    DATABASE_DIR,
+    LOGS_DIR,
+    PROFILES_DIR,
+    RULES_DIR,
+)
 
-APP_DIR = Path.home() / ".pdfunlocker"
-CONFIG_DIR = APP_DIR / "config"
-DATABASE_DIR = APP_DIR / "database"
-PROFILES_DIR = APP_DIR / "profiles"
-RULES_DIR = APP_DIR / "rules"
-LOGS_DIR = APP_DIR / "logs"
-
-CONFIG_FILE = CONFIG_DIR / "config.json"
+try:
+    VERSION = version("pdfunlocker")
+except PackageNotFoundError:
+    VERSION = "0.1.0a1"
 
 
 def load_config() -> dict:
@@ -76,8 +81,14 @@ def command_install(_args: argparse.Namespace) -> None:
 
         print()
 
-    default_inbox = Path.home() / "PDFUnlocker" / "inbox"
-    default_output = Path.home() / "PDFUnlocker" / "output"
+    shared_storage = Path.home() / "storage" / "shared"
+    if shared_storage.is_dir():
+        pdf_root = shared_storage / "PDF"
+    else:
+        pdf_root = Path.home() / "PDFUnlocker"
+
+    default_inbox = pdf_root / "inbox"
+    default_output = pdf_root / "output"
 
     inbox_dir = ask_directory(
         "Inbox directory",

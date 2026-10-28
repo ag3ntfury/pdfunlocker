@@ -7,8 +7,9 @@ from contextlib import contextmanager
 from pathlib import Path
 from datetime import datetime, timezone
 
-APP_DIR = Path.home() / ".pdfunlocker"
-DB_PATH = APP_DIR / "database" / "profiles.sqlite3"
+from pdfunlocker.paths import DATABASE_DIR
+
+DB_PATH = DATABASE_DIR / "profiles.sqlite3"
 
 # Initial registry. IDs 001-005 are the core profile fields; account/card/customer
 # identifiers follow immediately. IDs are permanent after schema v2 is installed.
