@@ -35,6 +35,15 @@ pdfunlocker --help
 
 On Termux, use the Python environment and activation commands appropriate to your Termux setup.
 
+
+## Installation Guide
+
+See the [Installation Guide](docs/installation.md) for Linux and Termux.
+
+## Contributing
+
+Read [CONTRIBUTING.md](CONTRIBUTING.md) for instructions on forking, testing, and submitting pull requests.
+
 ## Tests
 
 ```sh
