@@ -1,0 +1,21 @@
+rule:
+  number: '00007'
+  id: '00007'
+  name: '00007'
+  category: profile
+  priority: J7
+pattern:
+  fields:
+  - field_id: '003'
+    slice:
+      mode: first
+      count: 4
+  - field_id: '002'
+    slice:
+      mode: last
+      count: 4
+transform:
+  cases:
+  - capitalize
+  - upper
+  - lower

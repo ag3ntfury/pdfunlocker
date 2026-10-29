@@ -1,0 +1,12 @@
+rule:
+  number: '00012'
+  id: '00012'
+  name: 'Bajaj Registered Mobile Without Country Code'
+  category: profile
+  priority: A2
+pattern:
+  components:
+    - mobile:full_without_country_code
+transform:
+  cases:
+    - raw

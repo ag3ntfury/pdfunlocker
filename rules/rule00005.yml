@@ -1,0 +1,16 @@
+rule:
+  number: '00005'
+  id: '00005'
+  name: Rule 00006
+  category: profile
+  priority: H7
+pattern:
+  fields:
+  - field_id: '002'
+    slice:
+      mode: full
+transform:
+  cases:
+  - capitalize
+  - upper
+  - lower

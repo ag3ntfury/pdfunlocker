@@ -1,0 +1,23 @@
+rule:
+  number: '00001'
+  id: '00001'
+  name: First 4 Name + Birth Day + Month
+  category: profile
+  priority: C2
+pattern:
+  fields:
+  - field_id: '001'
+    slice:
+      mode: first
+      count: 4
+  - field_id: 009
+    slice:
+      mode: full
+  - field_id: '010'
+    slice:
+      mode: full
+transform:
+  cases:
+  - capitalize
+  - upper
+  - lower

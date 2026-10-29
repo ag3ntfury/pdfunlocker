@@ -1,0 +1,20 @@
+rule:
+  number: 00008
+  id: 00008
+  name: 00008
+  category: profile
+  priority: X400
+pattern:
+  fields:
+  - field_id: '001'
+    slice:
+      mode: first
+      count: 4
+  - field_id: 008
+    slice:
+      mode: full
+transform:
+  cases:
+  - capitalize
+  - upper
+  - lower

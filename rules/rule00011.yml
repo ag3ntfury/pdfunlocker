@@ -1,0 +1,23 @@
+rule:
+  number: '00011'
+  id: '00011'
+  name: 'ABCL NDC DOB + PAN'
+  category: profile
+  priority: A1
+pattern:
+  fields:
+    - field_id: '009'
+      slice:
+        mode: full
+    - field_id: '010'
+      slice:
+        mode: full
+    - field_id: '011'
+      slice:
+        mode: full
+    - field_id: '014'
+      slice:
+        mode: full
+transform:
+  cases:
+    - upper

@@ -1,0 +1,21 @@
+rule:
+  number: '00006'
+  id: '00006'
+  name: '00006'
+  category: profile
+  priority: H8
+pattern:
+  fields:
+  - field_id: '001'
+    slice:
+      mode: first
+      count: 4
+  - field_id: '002'
+    slice:
+      mode: last
+      count: 4
+transform:
+  cases:
+  - capitalize
+  - upper
+  - lower

@@ -1,0 +1,22 @@
+rule:
+  number: '00004'
+  id: '00004'
+  name: Rule 00004
+  category: profile
+  priority: G4
+pattern:
+  fields:
+  - field_id: 009
+    slice:
+      mode: full
+  - field_id: '010'
+    slice:
+      mode: full
+  - field_id: '011'
+    slice:
+      mode: full
+transform:
+  cases:
+  - capitalize
+  - upper
+  - lower

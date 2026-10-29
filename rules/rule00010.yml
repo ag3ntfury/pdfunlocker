@@ -1,0 +1,17 @@
+rule:
+  number: '00010'
+  id: '00010'
+  name: '00010'
+  category: profile
+  priority: G6
+pattern:
+  fields:
+  - field_id: '006'
+    slice:
+      mode: first
+      count: 6
+transform:
+  cases:
+  - capitalize
+  - upper
+  - lower

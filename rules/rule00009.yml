@@ -1,0 +1,16 @@
+rule:
+  number: 00009
+  id: 00009
+  name: 00009
+  category: profile
+  priority: Q3
+pattern:
+  fields:
+  - field_id: 008
+    slice:
+      mode: full
+transform:
+  cases:
+  - capitalize
+  - upper
+  - lower
