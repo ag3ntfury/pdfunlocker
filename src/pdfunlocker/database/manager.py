@@ -21,14 +21,9 @@ CREATE TABLE IF NOT EXISTS pdf_files (
     error TEXT
 );
 
-CREATE INDEX IF NOT EXISTS idx_pdf_files_status
-ON pdf_files(status);
-
-CREATE INDEX IF NOT EXISTS idx_pdf_files_profile
-ON pdf_files(profile_used);
-
-CREATE INDEX IF NOT EXISTS idx_pdf_files_sha256
-ON pdf_files(sha256);
+CREATE INDEX IF NOT EXISTS idx_pdf_files_status ON pdf_files(status);
+CREATE INDEX IF NOT EXISTS idx_pdf_files_profile ON pdf_files(profile_used);
+CREATE INDEX IF NOT EXISTS idx_pdf_files_sha256 ON pdf_files(sha256);
 
 CREATE TABLE IF NOT EXISTS attempts (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -42,49 +37,58 @@ CREATE TABLE IF NOT EXISTS attempts (
     FOREIGN KEY (pdf_id) REFERENCES pdf_files(id)
 );
 
-CREATE INDEX IF NOT EXISTS idx_attempts_pdf_id
-ON attempts(pdf_id);
-
-CREATE INDEX IF NOT EXISTS idx_attempts_profile
-ON attempts(profile_name);
-
-CREATE INDEX IF NOT EXISTS idx_attempts_result
-ON attempts(result);
-
-CREATE INDEX IF NOT EXISTS idx_attempts_pdf_profile
-ON attempts(pdf_id, profile_name);
+CREATE INDEX IF NOT EXISTS idx_attempts_pdf_id ON attempts(pdf_id);
+CREATE INDEX IF NOT EXISTS idx_attempts_profile ON attempts(profile_name);
+CREATE INDEX IF NOT EXISTS idx_attempts_result ON attempts(result);
+CREATE INDEX IF NOT EXISTS idx_attempts_pdf_profile ON attempts(pdf_id, profile_name);
 """
 
-
 VALID_STATUSES = {
-    "pending",
-    "processing",
-    "unlocked",
-    "failed",
-    "skipped",
-    "locked",
-    "corrupted",
+    "pending", "processing", "unlocked", "failed",
+    "skipped", "locked", "corrupted",
 }
 
 
+def _secure_directory(path: Path) -> None:
+    path.mkdir(parents=True, exist_ok=True)
+    try:
+        path.chmod(0o700)
+    except OSError:
+        pass
+
+
+def _secure_database_file(path: Path) -> None:
+    try:
+        if path.exists():
+            path.chmod(0o600)
+    except OSError:
+        pass
+
+
 def database_path() -> Path:
-    """Return only the configured database path; never silently select legacy data."""
     from pdfunlocker.paths import DATABASE_DIR
 
-    DATABASE_DIR.mkdir(parents=True, exist_ok=True)
+    _secure_directory(DATABASE_DIR)
     return DATABASE_DIR / "pdfunlocker.sqlite3"
 
 
 def connect() -> sqlite3.Connection:
-    connection = sqlite3.connect(database_path())
+    path = database_path()
+    connection = sqlite3.connect(path, timeout=30.0)
     connection.row_factory = sqlite3.Row
+    connection.execute("PRAGMA foreign_keys = ON")
+    connection.execute("PRAGMA busy_timeout = 30000")
+    connection.execute("PRAGMA synchronous = FULL")
+    _secure_database_file(path)
     return connection
 
 
 def initialize_database() -> None:
+    path = database_path()
     with connect() as connection:
         connection.executescript(SCHEMA)
         connection.commit()
+    _secure_database_file(path)
 
 
 def record_attempt(
@@ -102,48 +106,26 @@ def record_attempt(
         raise ValueError(f"Invalid attempt result: {result}")
 
     created_at = datetime.now(timezone.utc).isoformat()
-
     with connect() as connection:
         connection.execute(
             """
             INSERT INTO attempts (
-                pdf_id,
-                profile_name,
-                attempt_number,
-                pattern_identifier,
-                result,
-                elapsed_ms,
-                created_at,
-                rule_id
-            )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                pdf_id, profile_name, attempt_number, pattern_identifier,
+                result, elapsed_ms, created_at, rule_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
-                pdf_id,
-                profile_name,
-                attempt_number,
-                pattern_identifier,
-                result,
-                elapsed_ms,
-                created_at,
-                rule_id,
+                pdf_id, profile_name, attempt_number, pattern_identifier,
+                result, elapsed_ms, created_at, rule_id,
             ),
         )
         connection.commit()
 
 
-
-def clear_attempts_for_profile(
-    pdf_id: int,
-    profile_name: str,
-) -> None:
+def clear_attempts_for_profile(pdf_id: int, profile_name: str) -> None:
     with connect() as connection:
         connection.execute(
-            """
-            DELETE FROM attempts
-            WHERE pdf_id = ?
-              AND profile_name = ?
-            """,
+            "DELETE FROM attempts WHERE pdf_id = ? AND profile_name = ?",
             (pdf_id, profile_name),
         )
         connection.commit()
@@ -157,22 +139,15 @@ def list_attempts(
         if profile_name is not None:
             return connection.execute(
                 """
-                SELECT *
-                FROM attempts
-                WHERE pdf_id = ?
-                  AND profile_name = ?
+                SELECT * FROM attempts
+                WHERE pdf_id = ? AND profile_name = ?
                 ORDER BY attempt_number
                 """,
                 (pdf_id, profile_name),
             ).fetchall()
 
         return connection.execute(
-            """
-            SELECT *
-            FROM attempts
-            WHERE pdf_id = ?
-            ORDER BY id
-            """,
+            "SELECT * FROM attempts WHERE pdf_id = ? ORDER BY id",
             (pdf_id,),
         ).fetchall()
 
@@ -186,52 +161,27 @@ def add_pdf(
     with connect() as connection:
         cursor = connection.execute(
             """
-            INSERT OR IGNORE INTO pdf_files (
-                filename,
-                source_path,
-                sha256,
-                profile_used
-            )
+            INSERT OR IGNORE INTO pdf_files
+                (filename, source_path, sha256, profile_used)
             VALUES (?, ?, ?, ?)
             """,
-            (
-                filename,
-                source_path,
-                sha256,
-                profile_used,
-            ),
+            (filename, source_path, sha256, profile_used),
         )
-
         connection.commit()
-
-        if cursor.rowcount == 0:
-            return None
-
-        return int(cursor.lastrowid)
-
+        return None if cursor.rowcount == 0 else int(cursor.lastrowid)
 
 
 def get_pdf_by_id(pdf_id: int) -> sqlite3.Row | None:
     with connect() as connection:
         return connection.execute(
-            """
-            SELECT *
-            FROM pdf_files
-            WHERE id = ?
-            """,
-            (pdf_id,),
+            "SELECT * FROM pdf_files WHERE id = ?", (pdf_id,)
         ).fetchone()
 
 
 def get_pdf_by_hash(sha256: str) -> sqlite3.Row | None:
     with connect() as connection:
         return connection.execute(
-            """
-            SELECT *
-            FROM pdf_files
-            WHERE sha256 = ?
-            """,
-            (sha256,),
+            "SELECT * FROM pdf_files WHERE sha256 = ?", (sha256,)
         ).fetchone()
 
 
@@ -254,7 +204,6 @@ def update_status(
 
     fields = ["status = ?"]
     values: list[object] = [status]
-
     optional_values = {
         "original_path": original_path,
         "unlocked_path": unlocked_path,
@@ -276,11 +225,7 @@ def update_status(
 
     with connect() as connection:
         connection.execute(
-            f"""
-            UPDATE pdf_files
-            SET {", ".join(fields)}
-            WHERE id = ?
-            """,
+            f"UPDATE pdf_files SET {', '.join(fields)} WHERE id = ?",
             values,
         )
         connection.commit()
@@ -293,19 +238,10 @@ def list_pdfs(status: str | None = None) -> list[sqlite3.Row]:
                 raise ValueError(f"Invalid PDF status: {status}")
 
             return connection.execute(
-                """
-                SELECT *
-                FROM pdf_files
-                WHERE status = ?
-                ORDER BY id
-                """,
+                "SELECT * FROM pdf_files WHERE status = ? ORDER BY id",
                 (status,),
             ).fetchall()
 
         return connection.execute(
-            """
-            SELECT *
-            FROM pdf_files
-            ORDER BY id
-            """
+            "SELECT * FROM pdf_files ORDER BY id"
         ).fetchall()

@@ -371,6 +371,90 @@ def command_rules_archive(args: argparse.Namespace) -> None:
     archive_rule(args.rule)
 
 
+
+
+def command_database_backup(args: argparse.Namespace) -> None:
+    from pdfunlocker.database.maintenance import backup_database
+
+    try:
+        destination = backup_database(args.destination)
+    except (OSError, ValueError) as exc:
+        print(f"Database backup failed: {exc}")
+        raise SystemExit(1) from exc
+
+    print("Database backup created and verified:")
+    print(destination)
+
+
+def command_database_restore(args: argparse.Namespace) -> None:
+    from pathlib import Path
+    from pdfunlocker.database.maintenance import restore_database
+
+    print("WARNING: This will replace the current PDF Unlocker database.")
+    print(f"Backup to restore: {Path(args.source).expanduser().resolve()}")
+    answer = input("Continue with restore? [y/N]: ").strip().lower()
+
+    if answer not in {"y", "yes"}:
+        print("Restore cancelled. Current database unchanged.")
+        return
+
+    try:
+        restored, safety_backup = restore_database(args.source)
+    except (OSError, ValueError) as exc:
+        print(f"Database restore failed: {exc}")
+        raise SystemExit(1) from exc
+
+    print("Database restored and verified.")
+    print(f"Restored database: {restored}")
+    print(f"Pre-restore safety backup: {safety_backup}")
+
+
+def command_database_status(_args: argparse.Namespace) -> None:
+    import sqlite3
+    from pdfunlocker.database.manager import database_path
+
+    path = database_path()
+
+    print("PDF Unlocker Database Status")
+    print("============================")
+
+    if not path.exists():
+        print("Database: Not initialized")
+        print("Run: pdfunlocker scan")
+        return
+
+    print(f"Database: {path}")
+    print(f"File permissions: {oct(path.stat().st_mode & 0o777)}")
+    print(f"Directory permissions: {oct(path.parent.stat().st_mode & 0o777)}")
+
+    try:
+        with sqlite3.connect(path, timeout=30) as db:
+            integrity = db.execute("PRAGMA integrity_check").fetchone()[0]
+            violations = db.execute("PRAGMA foreign_key_check").fetchall()
+            journal = db.execute("PRAGMA journal_mode").fetchone()[0]
+
+            print(f"Integrity: {integrity}")
+            print(f"Foreign-key violations: {len(violations)}")
+            print(f"Journal mode: {journal}")
+
+            for table in ("pdf_files", "attempts"):
+                exists = db.execute(
+                    "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+                    (table,),
+                ).fetchone()
+
+                if exists:
+                    count = db.execute(
+                        f"SELECT COUNT(*) FROM {table}"
+                    ).fetchone()[0]
+                    print(f"{table}: {count}")
+                else:
+                    print(f"{table}: Missing")
+
+    except sqlite3.Error as exc:
+        print(f"Database inspection failed: {exc}")
+        raise SystemExit(1) from exc
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="pdfunlocker",
@@ -399,6 +483,43 @@ def build_parser() -> argparse.ArgumentParser:
         help="show PDF Unlocker status",
     )
     status_parser.set_defaults(func=command_status)
+
+    database_parser = subparsers.add_parser(
+        "database",
+        help="inspect, back up, or restore the database",
+    )
+    database_subparsers = database_parser.add_subparsers(
+        dest="database_command",
+        metavar="COMMAND",
+    )
+
+    database_backup = database_subparsers.add_parser(
+        "backup",
+        help="create and verify a database backup",
+    )
+    database_backup.add_argument(
+        "destination",
+        nargs="?",
+        help="optional destination path for the backup",
+    )
+    database_backup.set_defaults(func=command_database_backup)
+
+    database_restore = database_subparsers.add_parser(
+        "restore",
+        help="restore a database backup after confirmation",
+    )
+    database_restore.add_argument(
+        "source",
+        help="path to the verified backup database",
+    )
+    database_restore.set_defaults(func=command_database_restore)
+
+    database_status = database_subparsers.add_parser(
+        "status",
+        help="show database integrity, permissions, and record counts",
+    )
+    database_status.set_defaults(func=command_database_status)
+
 
     scan_parser = subparsers.add_parser(
         "scan",
