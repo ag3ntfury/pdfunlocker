@@ -54,7 +54,10 @@ This roadmap defines the planned development stages for PDF Unlocker.
 - Verify successful decryption.
 - Create unlocked PDF files.
 - Handle invalid, corrupted, and unsupported PDFs.
-- Prevent passwords from appearing in logs.
+- Prevent passwords from appearing in logs or process arguments.
+- Use private temporary password files for QPDF operations.
+- Restrict temporary password-file permissions.
+- Guarantee temporary password-file cleanup on every exit path.
 
 ## Phase 6 — Password Candidate Engine
 
@@ -105,6 +108,8 @@ This roadmap defines the planned development stages for PDF Unlocker.
 - Add duplicate-detection tests.
 - Add integration tests.
 - Test failure and recovery scenarios.
+- Verify passwords never appear in QPDF subprocess arguments.
+- Verify temporary password-file permissions and cleanup after success, failure, and timeout.
 
 ## Phase 11 — Documentation
 
@@ -131,17 +136,18 @@ This roadmap defines the planned development stages for PDF Unlocker.
 
 ## Current Priority
 
-The immediate priority is to complete the project foundation before implementing the password candidate engine.
+**P1 — Prevent QPDF password disclosure.**
 
-Current order:
+This security fix takes precedence over further password candidate-engine work.
 
-1. CLI foundation
-2. Profile management
-3. SQLite database
-4. PDF scanner
-5. QPDF integration
-6. Controlled password candidate engine
-7. Password learning
-8. Watch mode
-9. Linux support
-10. Testing and public release
+Immediate order:
+
+1. Replace command-line password arguments with private temporary password files.
+2. Restrict temporary file permissions to the owning user.
+3. Guarantee cleanup after success, failure, and timeout.
+4. Add regression tests proving passwords never enter QPDF argument lists.
+5. Run the complete test suite and CI checks.
+
+After this P1 fix, continue with the remaining QPDF integration work, then the controlled password candidate engine.
+
+The existing profile priority order, sequential profile fallback, candidate ordering, and configured attempt pacing must remain unchanged by this security fix.
