@@ -127,7 +127,6 @@ def initialize() -> None:
             rows = [dict(row) for row in db.execute("SELECT * FROM field_definitions").fetchall()]
             for row in rows:
                 db.execute("UPDATE field_definitions SET field_number=? WHERE field_key=?", (-int(row["field_number"]), row["field_key"]))
-            canonical = {item[1]: item for item in BUILTIN_FIELDS}
             used_keys = set()
             for number, key, label, multiple, category, archived in BUILTIN_FIELDS:
                 row = next((item for item in rows if item["field_key"] == key), None)

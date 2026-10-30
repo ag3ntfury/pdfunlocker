@@ -4,7 +4,6 @@ import calendar
 import re
 from dataclasses import dataclass
 from itertools import product
-from typing import Callable
 
 from pdfunlocker.profiles.manager import get_profile
 from pdfunlocker.rules.manager import Rule, load_executable_rules
