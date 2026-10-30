@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from pdfunlocker.database.manager import (
+    claim_pdf,
     initialize_database,
     list_pdfs,
     record_attempt,
@@ -120,12 +121,6 @@ def process_one_pdf(
         )
         print(f"[PDF {pdf_id}] INVALID OR CORRUPTED: {pdf_check.error}")
         return "failed"
-
-    update_status(
-        pdf_id,
-        "processing",
-        error=None,
-    )
 
     attempt_number = 0
     attempted_passwords: set[str] = set()
@@ -399,8 +394,26 @@ def unlock_all(
         print("Add rules when you are ready, then run the unlock command again.")
         return
 
-    totals = {"unlocked": 0, "skipped": 0, "failed": 0}
+    totals = {
+        "unlocked": 0,
+        "skipped": 0,
+        "failed": 0,
+        "not_claimed": 0,
+    }
+
     for record in records:
+        claimed = claim_pdf(
+            int(record["id"]),
+            retry_failed=retry_failed,
+        )
+        if not claimed:
+            totals["not_claimed"] += 1
+            print(
+                f"[PDF {record['id']}] NOT CLAIMED: "
+                "already processing or no longer eligible"
+            )
+            continue
+
         result = process_one_pdf(
             record,
             profiles,
@@ -408,11 +421,14 @@ def unlock_all(
             original_directory,
             unlocked_directory,
         )
-        totals[result if result in totals else "failed"] += 1
+        totals[result if result in {"unlocked", "skipped", "failed"} else "failed"] += 1
 
+    processed = totals["unlocked"] + totals["skipped"] + totals["failed"]
     print("===== UNLOCK SUMMARY =====")
-    print(f"Processed : {len(records)}")
+    print(f"Selected  : {len(records)}")
+    print(f"Processed : {processed}")
     print(f"Unlocked  : {totals['unlocked']}")
     print(f"Skipped   : {totals['skipped']}")
     print(f"Failed    : {totals['failed']}")
+    print(f"Not claimed: {totals['not_claimed']}")
     print()

@@ -230,6 +230,30 @@ def get_pdf_by_hash(sha256: str) -> sqlite3.Row | None:
         ).fetchone()
 
 
+
+def claim_pdf(pdf_id: int, *, retry_failed: bool = False) -> bool:
+    """Atomically claim an eligible PDF for processing.
+
+    Only pending PDFs are claimable by default. Failed PDFs are eligible
+    only when retry_failed is explicitly enabled. A conditional UPDATE makes
+    the claim safe when multiple processes select the same record.
+    """
+    eligible_statuses = ("pending", "failed") if retry_failed else ("pending",)
+    placeholders = ", ".join("?" for _ in eligible_statuses)
+
+    with connect() as connection:
+        cursor = connection.execute(
+            f"""
+            UPDATE pdf_files
+            SET status = 'processing', processed_at = NULL, error = NULL
+            WHERE id = ? AND status IN ({placeholders})
+            """,
+            (pdf_id, *eligible_statuses),
+        )
+        connection.commit()
+        return cursor.rowcount == 1
+
+
 def update_status(
     pdf_id: int,
     status: str,
