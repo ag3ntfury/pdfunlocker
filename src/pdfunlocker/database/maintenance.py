@@ -8,7 +8,7 @@ from pathlib import Path
 from pdfunlocker.database.manager import database_path
 from pdfunlocker.paths import APP_DIR
 
-
+DEFAULT_RETENTION = 30
 REQUIRED_TABLES = {"pdf_files", "attempts"}
 
 
@@ -17,6 +17,13 @@ def _secure(path: Path, directory: bool = False) -> None:
         path.chmod(0o700 if directory else 0o600)
     except OSError:
         pass
+
+
+def _backup_directory() -> Path:
+    directory = APP_DIR / "backups"
+    directory.mkdir(parents=True, exist_ok=True)
+    _secure(directory, directory=True)
+    return directory
 
 
 def _validate_database(path: Path) -> None:
@@ -52,15 +59,68 @@ def _validate_database(path: Path) -> None:
             )
 
 
+def list_backups(
+    directory: str | Path | None = None,
+) -> list[Path]:
+    folder = (
+        Path(directory).expanduser().resolve()
+        if directory is not None
+        else _backup_directory()
+    )
+
+    if not folder.is_dir():
+        return []
+
+    verified = []
+    for path in folder.glob("pdfunlocker-*.sqlite3"):
+        try:
+            _validate_database(path)
+            verified.append(path)
+        except (OSError, sqlite3.Error, ValueError):
+            continue
+
+    return sorted(
+        verified,
+        key=lambda item: (item.stat().st_mtime, item.name),
+        reverse=True,
+    )
+
+
+def prune_backups(
+    keep: int = DEFAULT_RETENTION,
+    directory: str | Path | None = None,
+) -> list[Path]:
+    if keep < 1:
+        raise ValueError("Backup retention must be at least 1")
+
+    folder = (
+        Path(directory).expanduser().resolve()
+        if directory is not None
+        else _backup_directory()
+    )
+
+    backups = list_backups(folder)
+    deleted = []
+
+    for old_backup in backups[keep:]:
+        try:
+            old_backup.unlink()
+            deleted.append(old_backup)
+        except OSError:
+            continue
+
+    return deleted
+
+
 def backup_database(destination: str | Path | None = None) -> Path:
     source = database_path().resolve()
     if not source.exists():
         raise FileNotFoundError(f"Main database does not exist: {source}")
 
-    if destination is None:
-        backup_dir = APP_DIR / "backups"
-        backup_dir.mkdir(parents=True, exist_ok=True)
-        _secure(backup_dir, directory=True)
+    automatic_retention = destination is None
+
+    if automatic_retention:
+        backup_dir = _backup_directory()
         stamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
         target = backup_dir / f"pdfunlocker-{stamp}.sqlite3"
     else:
@@ -85,6 +145,10 @@ def backup_database(destination: str | Path | None = None) -> Path:
         _validate_database(temporary)
         os.replace(temporary, target)
         _secure(target)
+
+        if automatic_retention:
+            prune_backups(DEFAULT_RETENTION, target.parent)
+
         return target
     finally:
         if temporary.exists():
@@ -105,6 +169,7 @@ def restore_database(source: str | Path) -> tuple[Path, Path]:
 
     safety_backup = backup_database()
     temporary = current.with_name(current.name + ".restore.tmp")
+
     if temporary.exists():
         temporary.unlink()
 

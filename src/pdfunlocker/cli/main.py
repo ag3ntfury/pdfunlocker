@@ -455,6 +455,37 @@ def command_database_status(_args: argparse.Namespace) -> None:
         print(f"Database inspection failed: {exc}")
         raise SystemExit(1) from exc
 
+
+
+def command_database_backups(_args: argparse.Namespace) -> None:
+    from pdfunlocker.database.maintenance import list_backups
+
+    from datetime import datetime
+
+    backups = list_backups()
+
+    print("Verified PDF Unlocker Backups")
+    print("=============================")
+
+    if not backups:
+        print("No verified backups found.")
+        return
+
+    for index, path in enumerate(backups, 1):
+        stat = path.stat()
+        modified = datetime.fromtimestamp(stat.st_mtime).astimezone()
+        size_mb = stat.st_size / (1024 * 1024)
+
+        print(
+            f"{index:02d}. {path.name} | "
+            f"{size_mb:.2f} MB | "
+            f"{modified:%Y-%m-%d %H:%M:%S}"
+        )
+
+    print()
+    print(f"Verified backups: {len(backups)}")
+    print("Automatic retention: newest 30 verified backups")
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="pdfunlocker",
@@ -519,6 +550,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="show database integrity, permissions, and record counts",
     )
     database_status.set_defaults(func=command_database_status)
+
+    database_backups = database_subparsers.add_parser(
+        "backups",
+        help="list verified database backups",
+    )
+    database_backups.set_defaults(func=command_database_backups)
+
 
 
     scan_parser = subparsers.add_parser(
