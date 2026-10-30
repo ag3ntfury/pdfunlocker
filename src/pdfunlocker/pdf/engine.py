@@ -5,6 +5,10 @@ from dataclasses import dataclass
 from pathlib import Path
 
 
+# Maximum time allowed for each individual QPDF operation.
+QPDF_TIMEOUT_SECONDS = 60
+
+
 @dataclass(frozen=True)
 class PDFCheckResult:
     success: bool
@@ -19,19 +23,35 @@ class PDFUnlockResult:
     error: str | None = None
 
 
-def check_pdf(path: Path) -> PDFCheckResult:
-    result = subprocess.run(
-        ["qpdf", "--check", str(path)],
+def _run_qpdf(args: list[str]) -> subprocess.CompletedProcess:
+    """Run QPDF with a fixed timeout and no shell interpretation."""
+    return subprocess.run(
+        ["qpdf", *args],
         capture_output=True,
         text=True,
         check=False,
+        timeout=QPDF_TIMEOUT_SECONDS,
     )
 
-    if result.returncode == 0:
+
+def check_pdf(path: Path) -> PDFCheckResult:
+    try:
+        result = _run_qpdf(["--check", str(path)])
+    except subprocess.TimeoutExpired:
         return PDFCheckResult(
-            success=True,
+            success=False,
             encrypted=False,
+            error=f"QPDF operation timed out after {QPDF_TIMEOUT_SECONDS} seconds",
         )
+    except OSError:
+        return PDFCheckResult(
+            success=False,
+            encrypted=False,
+            error="QPDF is unavailable or could not be executed",
+        )
+
+    if result.returncode == 0:
+        return PDFCheckResult(success=True, encrypted=False)
 
     combined = f"{result.stdout}\n{result.stderr}".lower()
 
@@ -50,17 +70,14 @@ def check_pdf(path: Path) -> PDFCheckResult:
 
 
 def try_password(path: Path, password: str) -> bool:
-    result = subprocess.run(
-        [
-            "qpdf",
+    try:
+        result = _run_qpdf([
             f"--password={password}",
             "--check",
             str(path),
-        ],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        check=False,
-    )
+        ])
+    except (subprocess.TimeoutExpired, OSError):
+        return False
 
     return result.returncode == 0
 
@@ -70,33 +87,40 @@ def unlock_pdf(
     password: str,
     output_path: Path,
 ) -> PDFUnlockResult:
-    output_path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    result = subprocess.run(
-        [
-            "qpdf",
+        result = _run_qpdf([
             f"--password={password}",
             "--decrypt",
             str(path),
             str(output_path),
-        ],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+        ])
 
-    if result.returncode != 0:
-        try:
-            output_path.unlink(missing_ok=True)
-        except OSError:
-            pass
+        if result.returncode != 0:
+            raise RuntimeError("QPDF decryption failed")
 
         return PDFUnlockResult(
-            success=False,
-            error="PDF unlock failed",
+            success=True,
+            output_path=output_path,
         )
 
+    except subprocess.TimeoutExpired:
+        error = (
+            f"QPDF operation timed out after "
+            f"{QPDF_TIMEOUT_SECONDS} seconds"
+        )
+    except OSError:
+        error = "QPDF is unavailable or could not be executed"
+    except RuntimeError:
+        error = "PDF unlock failed"
+
+    try:
+        output_path.unlink(missing_ok=True)
+    except OSError:
+        pass
+
     return PDFUnlockResult(
-        success=True,
-        output_path=output_path,
+        success=False,
+        error=error,
     )
