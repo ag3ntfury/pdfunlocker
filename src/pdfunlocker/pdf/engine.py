@@ -8,6 +8,9 @@ from pathlib import Path
 # Maximum time allowed for each individual QPDF operation.
 QPDF_TIMEOUT_SECONDS = 60
 
+# QPDF exit code 3 means warnings occurred, but processing succeeded.
+QPDF_SUCCESS_CODES = (0, 3)
+
 
 @dataclass(frozen=True)
 class PDFCheckResult:
@@ -50,12 +53,23 @@ def check_pdf(path: Path) -> PDFCheckResult:
             error="QPDF is unavailable or could not be executed",
         )
 
-    if result.returncode == 0:
+    if result.returncode in QPDF_SUCCESS_CODES:
         return PDFCheckResult(success=True, encrypted=False)
 
     combined = f"{result.stdout}\n{result.stderr}".lower()
 
-    if "password" in combined or "encrypted" in combined:
+    encryption_markers = (
+        "invalid password",
+        "password required",
+        "requires a password",
+        "incorrect password",
+        "file is encrypted",
+        "is encrypted",
+        "encrypted file",
+        "encryption key",
+    )
+
+    if any(marker in combined for marker in encryption_markers):
         return PDFCheckResult(
             success=False,
             encrypted=True,
@@ -79,7 +93,7 @@ def try_password(path: Path, password: str) -> bool:
     except (subprocess.TimeoutExpired, OSError):
         return False
 
-    return result.returncode == 0
+    return result.returncode in QPDF_SUCCESS_CODES
 
 
 def unlock_pdf(
@@ -97,7 +111,7 @@ def unlock_pdf(
             str(output_path),
         ])
 
-        if result.returncode != 0:
+        if result.returncode not in QPDF_SUCCESS_CODES:
             raise RuntimeError("QPDF decryption failed")
 
         return PDFUnlockResult(
