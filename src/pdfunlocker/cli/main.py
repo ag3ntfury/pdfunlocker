@@ -387,7 +387,6 @@ def command_database_backup(args: argparse.Namespace) -> None:
 
 
 def command_database_restore(args: argparse.Namespace) -> None:
-    from pathlib import Path
     from pdfunlocker.database.maintenance import restore_database
 
     print("WARNING: This will replace the current PDF Unlocker database.")
@@ -411,6 +410,7 @@ def command_database_restore(args: argparse.Namespace) -> None:
 
 def command_database_status(_args: argparse.Namespace) -> None:
     import sqlite3
+
     from pdfunlocker.database.manager import database_path
 
     path = database_path()
@@ -458,9 +458,9 @@ def command_database_status(_args: argparse.Namespace) -> None:
 
 
 def command_database_backups(_args: argparse.Namespace) -> None:
-    from pdfunlocker.database.maintenance import list_backups
-
     from datetime import datetime
+
+    from pdfunlocker.database.maintenance import list_backups
 
     backups = list_backups()
 

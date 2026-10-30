@@ -78,7 +78,7 @@ def process_pdf(
             original_path.unlink()
 
         shutil.move(str(source_path), str(original_path))
-    except OSError as exc:
+    except OSError:
         try:
             unlocked_path.unlink(missing_ok=True)
         except OSError:

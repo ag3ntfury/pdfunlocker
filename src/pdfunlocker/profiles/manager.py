@@ -5,7 +5,7 @@ import tempfile
 import re
 from pathlib import Path
 
-from pdfunlocker.paths import APP_DIR, PROFILES_DIR
+from pdfunlocker.paths import APP_DIR, PROFILES_DIR  # noqa: F401
 
 SEQUENCE_FILE = PROFILES_DIR / "profile_sequence.txt"
 
