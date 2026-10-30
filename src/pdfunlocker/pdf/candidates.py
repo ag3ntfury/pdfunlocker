@@ -344,7 +344,7 @@ def _resolve_field_part(part, profile: dict[str, str]) -> list[str]:
     definition = next(
         (
             item for item in definitions
-            if f"{int(item["field_number"]):03d}" == part.field_id
+            if f"{int(item['field_number']):03d}" == part.field_id
         ),
         None,
     )
