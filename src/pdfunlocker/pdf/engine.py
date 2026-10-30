@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import os
 import subprocess
+import tempfile
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Iterator
 
 
 # Maximum time allowed for each individual QPDF operation.
@@ -24,6 +28,29 @@ class PDFUnlockResult:
     success: bool
     output_path: Path | None = None
     error: str | None = None
+
+
+@contextmanager
+def _temporary_password_file(password: str) -> Iterator[Path]:
+    """Provide QPDF a private password file without exposing the secret in argv."""
+    if "\n" in password or "\r" in password:
+        raise ValueError("QPDF password files cannot represent newline characters")
+
+    fd, filename = tempfile.mkstemp(prefix="pdfunlocker-qpdf-password-")
+    password_path = Path(filename)
+
+    try:
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8", newline="") as stream:
+            fd = -1
+            stream.write(password)
+            stream.write("\n")
+
+        yield password_path
+    finally:
+        if fd >= 0:
+            os.close(fd)
+        password_path.unlink(missing_ok=True)
 
 
 def _run_qpdf(args: list[str]) -> subprocess.CompletedProcess:
@@ -85,12 +112,13 @@ def check_pdf(path: Path) -> PDFCheckResult:
 
 def try_password(path: Path, password: str) -> bool:
     try:
-        result = _run_qpdf([
-            f"--password={password}",
-            "--check",
-            str(path),
-        ])
-    except (subprocess.TimeoutExpired, OSError):
+        with _temporary_password_file(password) as password_path:
+            result = _run_qpdf([
+                f"--password-file={password_path}",
+                "--check",
+                str(path),
+            ])
+    except (subprocess.TimeoutExpired, OSError, ValueError):
         return False
 
     return result.returncode in QPDF_SUCCESS_CODES
@@ -104,12 +132,13 @@ def unlock_pdf(
     try:
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
-        result = _run_qpdf([
-            f"--password={password}",
-            "--decrypt",
-            str(path),
-            str(output_path),
-        ])
+        with _temporary_password_file(password) as password_path:
+            result = _run_qpdf([
+                f"--password-file={password_path}",
+                "--decrypt",
+                str(path),
+                str(output_path),
+            ])
 
         if result.returncode not in QPDF_SUCCESS_CODES:
             raise RuntimeError("QPDF decryption failed")
@@ -126,6 +155,8 @@ def unlock_pdf(
         )
     except OSError:
         error = "QPDF is unavailable or could not be executed"
+    except ValueError:
+        error = "Password contains unsupported newline characters"
     except RuntimeError:
         error = "PDF unlock failed"
 
