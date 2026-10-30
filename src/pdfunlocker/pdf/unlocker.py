@@ -7,7 +7,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from pdfunlocker.database.manager import (
-    connect,
     initialize_database,
     list_pdfs,
     record_attempt,
@@ -23,31 +22,8 @@ MAX_ATTEMPTS_PER_SECOND = 50.0
 
 
 def ensure_schema() -> None:
+    """Compatibility wrapper for centralized database initialization."""
     initialize_database()
-
-    with connect() as connection:
-        columns = {
-            row["name"]
-            for row in connection.execute("PRAGMA table_info(pdf_files)")
-        }
-
-        if "rule_id" not in columns:
-            connection.execute(
-                "ALTER TABLE pdf_files ADD COLUMN rule_id TEXT"
-            )
-
-        attempt_columns = {
-            row["name"]
-            for row in connection.execute("PRAGMA table_info(attempts)")
-        }
-
-        if "rule_id" not in attempt_columns:
-            connection.execute(
-                "ALTER TABLE attempts ADD COLUMN rule_id TEXT"
-            )
-
-        connection.commit()
-
 
 def profile_ids() -> list[int]:
     from pdfunlocker.paths import PROFILES_DIR

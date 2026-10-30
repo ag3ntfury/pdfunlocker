@@ -4,6 +4,8 @@ import sqlite3
 from pathlib import Path
 
 
+SCHEMA_VERSION = 1
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS pdf_files (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -40,7 +42,8 @@ CREATE TABLE IF NOT EXISTS attempts (
 CREATE INDEX IF NOT EXISTS idx_attempts_pdf_id ON attempts(pdf_id);
 CREATE INDEX IF NOT EXISTS idx_attempts_profile ON attempts(profile_name);
 CREATE INDEX IF NOT EXISTS idx_attempts_result ON attempts(result);
-CREATE INDEX IF NOT EXISTS idx_attempts_pdf_profile ON attempts(pdf_id, profile_name);
+CREATE INDEX IF NOT EXISTS idx_attempts_pdf_profile
+    ON attempts(pdf_id, profile_name);
 """
 
 VALID_STATUSES = {
@@ -72,23 +75,64 @@ def database_path() -> Path:
     return DATABASE_DIR / "pdfunlocker.sqlite3"
 
 
+def _table_columns(connection: sqlite3.Connection, table: str) -> set[str]:
+    return {
+        row["name"]
+        for row in connection.execute(f"PRAGMA table_info({table})")
+    }
+
+
+def _migrate_schema(connection: sqlite3.Connection) -> None:
+    connection.executescript(SCHEMA)
+
+    migrations = (
+        ("pdf_files", "rule_id", "TEXT"),
+        ("attempts", "rule_id", "TEXT"),
+    )
+
+    for table, column, sql_type in migrations:
+        if column not in _table_columns(connection, table):
+            connection.execute(
+                f"ALTER TABLE {table} ADD COLUMN {column} {sql_type}"
+            )
+
+    connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+    connection.commit()
+
+
+def _ensure_schema(connection: sqlite3.Connection) -> None:
+    version = connection.execute("PRAGMA user_version").fetchone()[0]
+
+    if version > SCHEMA_VERSION:
+        raise RuntimeError(
+            f"Database schema version {version} is newer than "
+            f"supported version {SCHEMA_VERSION}. Upgrade PDF Unlocker."
+        )
+
+    if version < SCHEMA_VERSION:
+        _migrate_schema(connection)
+
+
 def connect() -> sqlite3.Connection:
     path = database_path()
     connection = sqlite3.connect(path, timeout=30.0)
     connection.row_factory = sqlite3.Row
-    connection.execute("PRAGMA foreign_keys = ON")
-    connection.execute("PRAGMA busy_timeout = 30000")
-    connection.execute("PRAGMA synchronous = FULL")
-    _secure_database_file(path)
-    return connection
+
+    try:
+        connection.execute("PRAGMA foreign_keys = ON")
+        connection.execute("PRAGMA busy_timeout = 30000")
+        connection.execute("PRAGMA synchronous = FULL")
+        _ensure_schema(connection)
+        _secure_database_file(path)
+        return connection
+    except Exception:
+        connection.close()
+        raise
 
 
 def initialize_database() -> None:
-    path = database_path()
     with connect() as connection:
-        connection.executescript(SCHEMA)
         connection.commit()
-    _secure_database_file(path)
 
 
 def record_attempt(
@@ -106,6 +150,7 @@ def record_attempt(
         raise ValueError(f"Invalid attempt result: {result}")
 
     created_at = datetime.now(timezone.utc).isoformat()
+
     with connect() as connection:
         connection.execute(
             """
@@ -204,6 +249,7 @@ def update_status(
 
     fields = ["status = ?"]
     values: list[object] = [status]
+
     optional_values = {
         "original_path": original_path,
         "unlocked_path": unlocked_path,
