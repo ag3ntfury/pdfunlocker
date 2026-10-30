@@ -1,1 +1,20 @@
-test
+rule:
+  number: '5000'
+  id: '5000'
+  name: First 4 Name + Birth Year
+  category: profile
+  priority: C9
+pattern:
+  fields:
+  - field_id: '001'
+    slice:
+      mode: first
+      count: 4
+  - field_id: '011'
+    slice:
+      mode: full
+transform:
+  cases:
+  - capitalize
+  - upper
+  - lower
