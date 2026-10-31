@@ -350,6 +350,23 @@ def reserve_profile_id(sequence_hint: int = 0) -> int:
         return allocated
 
 
+def list_profiles() -> list[dict[str, str]]:
+    """Return profile records from SQLite; exports are not authoritative."""
+    initialize()
+    with _connect() as db:
+        rows = db.execute(
+            "SELECT profile_id, name, legacy_path "
+            "FROM profiles ORDER BY profile_id"
+        ).fetchall()
+        return [
+            {
+                "profile_id": str(row["profile_id"]),
+                "name": str(row["name"]),
+                "legacy_path": str(row["legacy_path"] or ""),
+            }
+            for row in rows
+        ]
+
 def delete_profile(profile_id: int) -> None:
     initialize()
     with _connect() as db:

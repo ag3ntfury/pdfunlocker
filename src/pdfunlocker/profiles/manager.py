@@ -60,14 +60,9 @@ def read_sequence() -> int:
 
 
 def next_profile_id() -> int:
+    """Reserve the next ID using SQLite, never by scanning .env exports."""
     ensure_profiles_dir()
     sequence_hint = read_sequence()
-
-    # Include legacy exports so profiles not yet imported into SQLite are preserved.
-    for path in PROFILES_DIR.glob("profile*.env"):
-        match = re.fullmatch(r"profile(\d+)\.env", path.name, re.IGNORECASE)
-        if match:
-            sequence_hint = max(sequence_hint, int(match.group(1)))
 
     from pdfunlocker.profiles import store
 
@@ -159,50 +154,84 @@ def _save_env_file(path: Path, values: dict[str, str]) -> None:
 
 
 def load_env(path: Path) -> dict[str, str]:
-    """Load from SQLite after import; fall back to the legacy .env file."""
+    """Load from SQLite and repair its export; never import data from .env."""
     from pdfunlocker.profiles import store
+
     store.initialize()
-    legacy = _load_env_file(path)
-    profile_id = legacy.get("PROFILE_ID", "").strip()
-    if profile_id.isdigit():
-        stored = store.load_profile(int(profile_id))
-        if stored is not None:
-            if legacy != stored:
-                try:
-                    _save_env_file(path, stored)
-                except OSError as exc:
-                    print(f"Warning: profile loaded from SQLite, but legacy export repair failed: {exc}")
-            return stored
-        if legacy.get("PROFILE_NAME", "").strip():
-            store.save_profile(path, legacy)
-            stored = store.load_profile(int(profile_id))
-            if stored is not None:
-                return stored
-    return legacy
+    requested_path = Path(path)
+    records = store.list_profiles()
+
+    record = next(
+        (
+            item for item in records
+            if item["legacy_path"]
+            and Path(item["legacy_path"]) == requested_path
+        ),
+        None,
+    )
+
+    if record is None:
+        match = re.fullmatch(
+            r"profile(\d+)\.env",
+            requested_path.name,
+            re.IGNORECASE,
+        )
+        if match:
+            record = next(
+                (
+                    item for item in records
+                    if int(item["profile_id"]) == int(match.group(1))
+                ),
+                None,
+            )
+
+    if record is None:
+        return {}
+
+    stored = store.load_profile(int(record["profile_id"]))
+    if stored is None:
+        return {}
+
+    try:
+        if not requested_path.exists() or _load_env_file(requested_path) != stored:
+            _save_env_file(requested_path, stored)
+    except OSError as exc:
+        print(
+            "Warning: profile loaded from SQLite, but export repair failed: "
+            f"{exc}"
+        )
+
+    return stored
 
 
 def save_env(path: Path, values: dict[str, str]) -> None:
-    """Persist profile data in SQLite and maintain a private legacy export."""
+    """Save to SQLite first, then export the canonical database values."""
     from pdfunlocker.profiles import store
+
     store.save_profile(path, values)
-    _save_env_file(path, values)
+
+    profile_id_text = str(values.get("PROFILE_ID", "")).strip()
+    if not profile_id_text.isdigit():
+        raise ValueError("A valid PROFILE_ID is required to save a profile.")
+
+    stored = store.load_profile(int(profile_id_text))
+    if stored is None:
+        raise RuntimeError(
+            "Profile was not available in SQLite after saving; export skipped."
+        )
+
+    _save_env_file(path, stored)
 
 
 def profile_names() -> dict[str, int]:
-    result: dict[str, int] = {}
+    """Return profile names from SQLite, independent of .env exports."""
+    from pdfunlocker.profiles import store
 
-    ensure_profiles_dir()
-
-    for path in sorted(PROFILES_DIR.glob("profile*.env")):
-        values = load_env(path)
-
-        name = values.get("PROFILE_NAME", "").strip()
-        profile_id = values.get("PROFILE_ID", "").strip()
-
-        if name and profile_id.isdigit():
-            result[name.casefold()] = int(profile_id)
-
-    return result
+    return {
+        record["name"].strip().casefold(): int(record["profile_id"])
+        for record in store.list_profiles()
+        if record["name"].strip()
+    }
 
 
 def ask_optional_value(field: str) -> str:
@@ -585,27 +614,17 @@ def add_profile() -> int:
 
 
 def list_profiles() -> None:
-    ensure_profiles_dir()
+    """Display profiles stored in SQLite, even if exports are missing."""
+    from pdfunlocker.profiles import store
 
-    profiles = []
-
-    for path in sorted(PROFILES_DIR.glob("profile*.env")):
-        values = load_env(path)
-
-        profile_id = values.get("PROFILE_ID", "").strip()
-        name = values.get("PROFILE_NAME", "").strip()
-
-        if profile_id.isdigit() and name:
-            profiles.append(
-                (int(profile_id), name, path)
-            )
+    records = store.list_profiles()
 
     print()
     print("PDF Unlocker Profiles")
     print("=====================")
     print()
 
-    if not profiles:
+    if not records:
         print("No profiles found.")
         print()
         return
@@ -613,12 +632,12 @@ def list_profiles() -> None:
     print(f"{'ID':<8}{'NAME':<30}FILE")
     print("-" * 70)
 
-    for profile_id, name, path in profiles:
-        print(
-            f"{profile_id:<8}"
-            f"{name:<30}"
-            f"{path.name}"
-        )
+    for record in records:
+        profile_id = int(record["profile_id"])
+        name = record["name"]
+        saved_path = record["legacy_path"]
+        path = Path(saved_path) if saved_path else profile_path(profile_id)
+        print(f"{profile_id:<8}{name:<30}{path.name}")
 
     print()
 
@@ -626,15 +645,34 @@ def list_profiles() -> None:
 def get_profile(
     profile_id: int,
 ) -> tuple[Path, dict[str, str]] | None:
-    path = profile_path(profile_id)
+    """Retrieve a profile from SQLite, repairing its export when possible."""
+    from pdfunlocker.profiles import store
 
-    if not path.exists():
+    values = store.load_profile(profile_id)
+    if values is None:
         return None
 
-    values = load_env(path)
+    record = next(
+        (
+            item for item in store.list_profiles()
+            if int(item["profile_id"]) == profile_id
+        ),
+        None,
+    )
+    path = (
+        Path(record["legacy_path"])
+        if record and record["legacy_path"]
+        else profile_path(profile_id)
+    )
 
-    if values.get("PROFILE_ID") != str(profile_id):
-        return None
+    try:
+        if not path.exists() or _load_env_file(path) != values:
+            _save_env_file(path, values)
+    except OSError as exc:
+        print(
+            "Warning: profile loaded from SQLite, but export repair failed: "
+            f"{exc}"
+        )
 
     return path, values
 

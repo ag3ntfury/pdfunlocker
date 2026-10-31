@@ -5,20 +5,27 @@ import json
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 
-from pdfunlocker.paths import (
-    APP_DIR,
-    CONFIG_DIR,
-    CONFIG_FILE,
-    DATABASE_DIR,
-    LOGS_DIR,
-    PROFILES_DIR,
-    RULES_DIR,
-)
 
 try:
     VERSION = version("pdfunlocker")
 except PackageNotFoundError:
     VERSION = "0.1.0a1"
+
+
+def _load_legacy_paths() -> None:
+    """Load legacy path constants only for legacy development commands."""
+    from pdfunlocker import paths
+
+    globals().update({
+        "APP_DIR": paths.APP_DIR,
+        "CONFIG_DIR": paths.CONFIG_DIR,
+        "CONFIG_FILE": paths.CONFIG_FILE,
+        "DATABASE_DIR": paths.DATABASE_DIR,
+        "LOGS_DIR": paths.LOGS_DIR,
+        "PROFILES_DIR": paths.PROFILES_DIR,
+        "RULES_DIR": paths.RULES_DIR,
+    })
+
 
 
 def load_config() -> dict:
@@ -737,14 +744,41 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+
 def main() -> None:
     import re
     import sys
 
+    from pdfunlocker.cli import installer, personal_cli
+
     argv = sys.argv[1:]
-    if len(argv) == 2 and re.fullmatch(r"rule\d{1,5}", argv[0], re.IGNORECASE) and argv[1] in {"--help", "-h"}:
+    installed = installer.find_installation_config() is not None
+
+    direct_rule_help = (
+        len(argv) == 2
+        and re.fullmatch(r"rule\d{1,5}", argv[0], re.IGNORECASE)
+        and argv[1] in {"--help", "-h"}
+    )
+
+    # Once Personal is installed, every command uses its restricted CLI.
+    if installed:
+        if direct_rule_help:
+            personal_cli.show_rule_reference(argv[0][4:].zfill(5))
+        else:
+            personal_cli.main(argv)
+        return
+
+    # Compatibility alias: install always invokes the new setup wizard.
+    if argv and argv[0] == "install":
+        personal_cli.main(["setup", *argv[1:]])
+        return
+
+    # Keep the repository rule-help shortcut for an uninstalled
+    # development checkout only.
+    if direct_rule_help:
         reference = argv[0][4:].zfill(5)
         from pdfunlocker.rules.manager import show_rule
+
         try:
             show_rule(reference)
         except (ValueError, OSError) as exc:
@@ -752,15 +786,31 @@ def main() -> None:
             raise SystemExit(2)
         return
 
-    parser = build_parser()
-    args = parser.parse_args()
+    personal_commands = {
+        "setup", "status", "config", "profile", "rules",
+        "scan", "unlock", "retry", "check-corrupted",
+    }
+    is_personal_command = (
+        not argv
+        or argv[0] in personal_commands
+        or argv[0] in {"--help", "-h", "--version"}
+    )
 
+    legacy_rule_mutation = (
+        len(argv) >= 2
+        and argv[0] == "rules"
+        and argv[1] in {"add", "modify", "remove", "archive"}
+    )
+
+    if is_personal_command and not legacy_rule_mutation:
+        personal_cli.main(argv)
+        return
+
+    # Only explicitly selected legacy development commands reach here.
+    _load_legacy_paths()
+    parser = build_parser()
+    args = parser.parse_args(argv)
     if not hasattr(args, "func"):
         parser.print_help()
         return
-
     args.func(args)
-
-
-if __name__ == "__main__":
-    main()
