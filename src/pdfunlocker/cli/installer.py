@@ -407,59 +407,93 @@ def _copy_prefilled_rules(destination: Path) -> int:
     return copied
 
 
-def _initialize_personal_profile(plan: SetupPlan) -> int:
-    """Initialize the isolated profile DB and generate its .env export."""
+def _initialize_personal_profile(
+    plan: SetupPlan,
+    input_func: Callable[[str], str] = input,
+) -> int:
+    """Create or recover the single profile in this isolated installation."""
     from pdfunlocker.profiles import manager as profile_manager
     from pdfunlocker.profiles import store
 
     previous_db_path = store.DB_PATH
+    previous_profiles_dir = profile_manager.PROFILES_DIR
+    previous_sequence_file = profile_manager.SEQUENCE_FILE
+
     store.DB_PATH = plan.database_directory / "profiles.sqlite3"
+    profile_manager.PROFILES_DIR = plan.profiles_directory
+    profile_manager.SEQUENCE_FILE = (
+        plan.profiles_directory / "profile_sequence.txt"
+    )
 
     try:
         store.initialize()
+        records = store.list_profiles()
 
-        profiles = store.list_profiles()
-        existing = next(
-            (
-                item
-                for item in profiles
-                if str(item.get("name", "")).strip().casefold() == "personal"
-            ),
-            None,
-        )
-
-        if existing:
-            profile_id = int(existing["profile_id"])
-            stored_values = store.load_profile(profile_id)
-
-            if stored_values is None:
-                raise SetupError(
-                    "Personal profile exists but its SQLite values are missing."
-                )
-
-            profile_path = plan.profiles_directory / (
-                f"profile{profile_id:02d}.env"
+        if len(records) > 1:
+            raise SetupError(
+                "The Personal database contains more than one profile. "
+                "Setup will not modify it."
             )
-            profile_manager.save_env(profile_path, stored_values)
-            return profile_id
 
-        profile_id = store.reserve_profile_id()
-        profile_path = plan.profiles_directory / (
-            f"profile{profile_id:02d}.env"
-        )
-
-        profile_manager.save_env(
-            profile_path,
-            {
+        if records:
+            profile_id = int(records[0]["profile_id"])
+            values = store.load_profile(profile_id)
+            if values is None:
+                raise SetupError(
+                    "An existing profile record has no SQLite values."
+                )
+            if not str(values.get("PROFILE_NAME", "")).strip():
+                raise SetupError("The saved profile name is empty.")
+            profile_path = profile_manager.profile_path(profile_id)
+            profile_manager.save_env(profile_path, values)
+        else:
+            print()
+            print("Personal profile setup")
+            print("----------------------")
+            print("Choose a name for this profile.")
+            profile_name = profile_manager.ask_profile_name(
+                input_func=input_func
+            )
+            profile_id = profile_manager.next_profile_id()
+            values = {
                 "PROFILE_ID": str(profile_id),
-                "PROFILE_NAME": "Personal",
-            },
-        )
-        return profile_id
+                "PROFILE_NAME": profile_name,
+            }
+            profile_manager.collect_profile_values(
+                values,
+                input_func=input_func,
+            )
+            profile_path = profile_manager.profile_path(profile_id)
+            profile_manager.save_env(profile_path, values)
 
+        # SQLite is authoritative. Verify its row and exported values.
+        verified_records = store.list_profiles()
+        matching = [
+            item for item in verified_records
+            if int(item["profile_id"]) == profile_id
+        ]
+        verified_values = store.load_profile(profile_id)
+
+        if len(verified_records) != 1 or len(matching) != 1:
+            raise SetupError(
+                "Expected exactly one saved profile in the SQLite database."
+            )
+        if verified_values is None:
+            raise SetupError("Profile verification in SQLite failed.")
+        if not verified_values.get("PROFILE_NAME", "").strip():
+            raise SetupError("The verified profile name is empty.")
+
+        exported_values = profile_manager._load_env_file(profile_path)
+        if exported_values != verified_values:
+            raise SetupError(
+                "The profile export does not match the SQLite record."
+            )
+
+        return profile_id
     finally:
         store.DB_PATH = previous_db_path
-
+        profile_manager.PROFILES_DIR = previous_profiles_dir
+        profile_manager.SEQUENCE_FILE = previous_sequence_file
 
 def _setup_journal_path(plan: SetupPlan) -> Path:
     return plan.app_data / "setup-progress.json"
@@ -549,7 +583,10 @@ def _explain_recovery_path_mismatch(recovery: dict) -> str:
         f"Recovery journal: {recovery.get('journal_file', 'unknown')}"
     )
 
-def apply_plan(plan: SetupPlan) -> dict:
+def apply_plan(
+    plan: SetupPlan,
+    input_func: Callable[[str], str] = input,
+) -> dict:
     """Apply a validated and confirmed setup plan.
 
     Operations are idempotent where possible. The completion config is written
@@ -610,7 +647,9 @@ def apply_plan(plan: SetupPlan) -> dict:
             )
         _write_setup_progress(plan, "rules_validated")
 
-        profile_id = _initialize_personal_profile(plan)
+        profile_id = _initialize_personal_profile(
+            plan, input_func=input_func
+        )
         _write_setup_progress(plan, "profile_initialized")
 
         config = {
@@ -692,8 +731,8 @@ def run_setup(
         print("An earlier setup was interrupted.")
         print(f"Last completed stage: {recovery.get('stage', 'unknown')}")
         print(f"Recovery journal: {recovery['journal_file']}")
-        print("You can safely retry with the same paths; completed setup")
-        print("artifacts will be reused and no PDFs will be scanned.")
+        print("The original setup paths will be reused.")
+        print("No PDFs will be scanned.")
 
     print()
     print("========================================")
@@ -710,7 +749,6 @@ def run_setup(
         if choice == "2":
             print("Enterprise will be available soon. Stay tuned!")
             return False
-
         if choice != "1":
             print("Invalid edition selection. No changes were made.")
             return False
@@ -719,28 +757,33 @@ def run_setup(
         print("Personal edition setup")
         print("----------------------")
 
-        app_data = _ask_path(
-            "App-data directory",
-            DEFAULT_APP_DATA,
-            input_func,
-        )
-        sources = _ask_sources(input_func)
-        document_root = _ask_path(
-            "Document root",
-            DEFAULT_DOCUMENT_ROOT,
-            input_func,
-        )
+        if recovery is not None:
+            app_data = Path(recovery["app_data_directory"])
+            sources = tuple(
+                Path(item) for item in recovery["source_directories"]
+            )
+            document_root = Path(recovery["document_root"])
+            plan = build_plan(app_data, sources, document_root)
 
-        plan = build_plan(app_data, sources, document_root)
-        if recovery is not None and not _recovery_matches_plan(plan, recovery):
-            print()
-            print("Setup recovery path mismatch:")
-            print(_explain_recovery_path_mismatch(recovery))
-            print("No files were changed.")
-            return False
+            if not _recovery_matches_plan(plan, recovery):
+                print("Setup recovery path mismatch.")
+                print(_explain_recovery_path_mismatch(recovery))
+                print("No files were changed.")
+                return False
+
+            print("Resuming with the previously configured folders.")
+            print("Folder setup will not be repeated.")
+        else:
+            app_data = _ask_path(
+                "App-data directory", DEFAULT_APP_DATA, input_func
+            )
+            sources = _ask_sources(input_func)
+            document_root = _ask_path(
+                "Document root", DEFAULT_DOCUMENT_ROOT, input_func
+            )
+            plan = build_plan(app_data, sources, document_root)
 
         errors = validate_plan(plan)
-
         if errors:
             print()
             print("Setup validation failed:")
@@ -748,32 +791,34 @@ def run_setup(
                 print(f"  - {error}")
             return False
 
-        _show_plan(plan)
+        if recovery is None:
+            _show_plan(plan)
+            answer = input_func(
+                "\nCreate these directories and initialize Personal edition? "
+                "[y/N]: "
+            ).strip().casefold()
+            if answer not in {"y", "yes"}:
+                print("Setup cancelled. No setup changes were made.")
+                return False
+        else:
+            print("Continuing the interrupted setup.")
 
-        answer = input_func(
-            "\nCreate these directories and initialize Personal edition? "
-            "[y/N]: "
-        ).strip().casefold()
-
-        if answer not in {"y", "yes"}:
-            print("Setup cancelled. No setup changes were made.")
-            return False
-
-        result = apply_plan(plan)
+        result = apply_plan(plan, input_func=input_func)
 
     except (EOFError, KeyboardInterrupt):
         print("\nSetup cancelled. No further changes were requested.")
         return False
     except Exception as exc:
         print(f"Setup failed: {type(exc).__name__}: {exc}")
-        recovery = find_incomplete_setup()
-        if recovery:
+        saved_recovery = find_incomplete_setup()
+        if saved_recovery:
             print()
             print("An incomplete setup checkpoint was saved.")
-            print(f"Last recorded stage: {recovery.get('stage', 'unknown')}")
-            print(f"Recovery journal: {recovery['journal_file']}")
-            print("Retry setup using the same app-data, source, and document paths.")
-            print("Existing setup files will be reused; no PDFs will be scanned.")
+            print(
+                f"Last recorded stage: {saved_recovery.get('stage', 'unknown')}"
+            )
+            print(f"Recovery journal: {saved_recovery['journal_file']}")
+            print("Retry setup to resume using the saved paths.")
         else:
             print("Review the paths and permissions before retrying.")
         print("No PDFs were scanned.")

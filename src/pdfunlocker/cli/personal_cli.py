@@ -226,12 +226,6 @@ def _personal_profile_context(config: dict) -> Iterator[tuple[object, object, in
                 "in the Personal database."
             )
 
-        if matching[0]["name"].strip().casefold() != "personal":
-            raise RuntimeError(
-                "The configured profile is not named Personal. "
-                "No profile data was changed."
-            )
-
         saved_path = matching[0].get("legacy_path", "")
         if saved_path:
             try:
@@ -297,8 +291,11 @@ def _profile_command(action: str) -> None:
 
                 retained_values = {
                     "PROFILE_ID": str(profile_id),
-                    "PROFILE_NAME": "Personal",
+                    "PROFILE_NAME": values.get("PROFILE_NAME", "").strip(),
                 }
+                if not retained_values["PROFILE_NAME"]:
+                    print("Profile name is missing. Nothing was changed.")
+                    return
                 manager.save_env(profile_path, retained_values)
                 print()
                 print("Personal profile values have been reset.")

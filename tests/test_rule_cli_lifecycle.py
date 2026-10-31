@@ -22,7 +22,10 @@ class RuleCliLifecycleTests(unittest.TestCase):
         self.temp.cleanup()
 
     def run_cli(self, *args):
-        with patch("sys.argv", ["pdfunlocker", *args]):
+        with patch(
+            "pdfunlocker.cli.installer.find_installation_config",
+            return_value=None,
+        ), patch("sys.argv", ["pdfunlocker", *args]):
             cli.main()
 
     def test_create_modify_and_remove_rule_through_cli(self):

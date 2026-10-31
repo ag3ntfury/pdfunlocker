@@ -104,6 +104,7 @@ def test_installed_personal_cli_rejects_legacy_mutations(
 
 def test_setup_command_runs_setup_wizard(monkeypatch):
     calls = []
+    monkeypatch.setattr(installer, "find_installation_config", lambda: None)
     monkeypatch.setattr(installer, "run_setup", lambda: calls.append("setup"))
 
     with patch("sys.argv", ["pdfunlocker", "setup"]):

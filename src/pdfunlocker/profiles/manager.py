@@ -235,12 +235,12 @@ def profile_names() -> dict[str, int]:
 
 
 def ask_optional_value(field: str) -> str:
-    return input(f"{field} [optional]: ").strip()
+    return input(f"{field}: ").strip()
 
 
-def ask_profile_name() -> str:
+def ask_profile_name(input_func=input) -> str:
     while True:
-        name = input("Profile name: ").strip()
+        name = input_func("Profile name: ").strip()
 
         if not name:
             print("Profile name is required.")
@@ -258,6 +258,54 @@ def ask_profile_name() -> str:
             continue
 
         return name
+
+
+# ITU-assigned international country calling codes.
+VALID_COUNTRY_CALLING_CODES = frozenset("""
+1 7 20 27 30 31 32 33 34 36 39 40 41 43 44 45 46 47 48 49
+51 52 53 54 55 56 57 58 60 61 62 63 64 65 66 81 82 84 86
+90 91 92 93 94 95 98
+211 212 213 216 218
+220 221 222 223 224 225 226 227 228 229
+230 231 232 233 234 235 236 237 238 239
+240 241 242 243 244 245 246 247 248 249
+250 251 252 253 254 255 256 257 258 260
+261 262 263 264 265 266 267 268 269
+290 291 297 298 299
+350 351 352 353 354 355 356 357 358 359
+370 371 372 373 374 375 376 377 378 380
+381 382 383 385 386 387 389
+420 421 423
+500 501 502 503 504 505 506 507 508 509
+590 591 592 593 594 595 596 597 598 599
+670 672 673 674 675 676 677 678 679
+680 681 682 683 685 686 687 688 689 690
+691 692
+850 852 853 855 856 880 886
+960 961 962 963 964 965 966 967 968 970
+971 972 973 974 975 976 977
+992 993 994 995 996 998
+""".split())
+
+
+def normalize_country_calling_code(value: str) -> str | None:
+    """Normalize and validate an international country calling code."""
+    value = value.strip()
+
+    if not value:
+        return "+91"
+
+    if not re.fullmatch(r"\+?[0-9]{1,3}", value):
+        print("Invalid country calling code. Enter a valid code, such as 91 or 92.")
+        return None
+
+    digits = value.removeprefix("+")
+
+    if digits not in VALID_COUNTRY_CALLING_CODES:
+        print("Invalid country calling code. Enter a valid code, such as 91 or 92.")
+        return None
+
+    return f"+{digits}"
 
 
 def normalize_and_validate(field: str, value: str) -> str | None:
@@ -350,6 +398,7 @@ def normalize_and_validate(field: str, value: str) -> str | None:
 def collect_fixed_fields(
     existing: dict[str, str] | None = None,
     modifying: bool = False,
+    input_func=input,
 ) -> None:
     values = existing if existing is not None else {}
 
@@ -361,7 +410,7 @@ def collect_fixed_fields(
 
             if modifying and current:
                 while True:
-                    value = input(
+                    value = input_func(
                         f"{field} [{current}] "
                         "(Enter=keep, -=clear): "
                     ).strip()
@@ -381,7 +430,7 @@ def collect_fixed_fields(
 
             else:
                 while True:
-                    value = input(f"{field} [optional]: ").strip()
+                    value = input_func(f"{field}: ").strip()
 
                     if not value:
                         break
@@ -398,6 +447,7 @@ def collect_fixed_fields(
 def collect_repeatable_fields(
     values: dict[str, str],
     modifying: bool = False,
+    input_func=input,
 ) -> None:
     from pdfunlocker.profiles import store
 
@@ -431,7 +481,7 @@ def collect_repeatable_fields(
                 sequence = 1 if field == prefix else int(field.rsplit("_", 1)[1])
                 code = store.value_code(field_number, sequence, True)
                 while True:
-                    value = input(
+                    value = input_func(
                         f"{code} {label.title()} [{values[field]}] "
                         "(Enter=keep, -=clear): "
                     ).strip()
@@ -453,13 +503,18 @@ def collect_repeatable_fields(
             code = store.value_code(field_number, sequence, True)
 
             if prefix == "MOBILE":
-                country_code = input(
-                    f"{code} Mobile country code [default +91]: "
-                ).strip() or "+91"
-                if not country_code.startswith("+"):
-                    country_code = "+" + country_code
-                number_text = input(
-                    f"{code} Mobile number [optional]: "
+                while True:
+                    country_code_input = input_func(
+                        f"{code} Mobile country code [default +91]: "
+                    ).strip()
+                    country_code = normalize_country_calling_code(
+                        country_code_input
+                    )
+                    if country_code is not None:
+                        break
+
+                number_text = input_func(
+                    f"{code} Mobile number: "
                 ).strip()
                 if not number_text:
                     break
@@ -467,7 +522,7 @@ def collect_repeatable_fields(
                     field, f"{country_code}{number_text}"
                 )
             else:
-                value = input(f"{code} {label.title()} [optional]: ").strip()
+                value = input_func(f"{code} {label.title()}: ").strip()
                 if not value:
                     break
                 normalized = normalize_and_validate(field, value)
@@ -482,6 +537,7 @@ def collect_repeatable_fields(
 def collect_custom_fields(
     values: dict[str, str],
     modifying: bool = False,
+    input_func=input,
 ) -> None:
     from pdfunlocker.profiles import store
 
@@ -519,7 +575,7 @@ def collect_custom_fields(
                 current = values[old_key]
                 if not modifying:
                     continue
-                answer = input(
+                answer = input_func(
                     f"{store.value_code(number, int(old_key.rsplit('_', 1)[1]), True)} "
                     f"{label} [{current}] (Enter=keep, -=clear): "
                 ).strip()
@@ -532,9 +588,9 @@ def collect_custom_fields(
 
             sequence = store.next_value_sequence(profile_id, key, values)
             while True:
-                answer = input(
+                answer = input_func(
                     f"{store.value_code(number, sequence, True)} "
-                    f"{label} [optional]: "
+                    f"{label}: "
                 ).strip()
                 if not answer:
                     break
@@ -551,9 +607,9 @@ def collect_custom_fields(
                 f"{store.value_code(number)} {label} "
                 f"[{current}] (Enter=keep, -=clear): "
                 if modifying and current
-                else f"{store.value_code(number)} {label} [optional]: "
+                else f"{store.value_code(number)} {label}: "
             )
-            answer = input(prompt).strip()
+            answer = input_func(prompt).strip()
             if modifying and answer == "-":
                 values.pop(key, None)
             elif answer:
@@ -566,6 +622,7 @@ def collect_custom_fields(
 def collect_profile_values(
     existing: dict[str, str] | None = None,
     modifying: bool = False,
+    input_func=input,
 ) -> dict[str, str]:
     values = existing if existing is not None else {}
 
@@ -574,9 +631,9 @@ def collect_profile_values(
     print("Press Enter to skip an optional field.")
     print()
 
-    collect_fixed_fields(values, modifying)
-    collect_repeatable_fields(values, modifying)
-    collect_custom_fields(values, modifying)
+    collect_fixed_fields(values, modifying, input_func)
+    collect_repeatable_fields(values, modifying, input_func)
+    collect_custom_fields(values, modifying, input_func)
 
     return values
 

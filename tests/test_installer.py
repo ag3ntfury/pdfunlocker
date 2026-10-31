@@ -28,6 +28,20 @@ def make_plan(tmp_path: Path):
     )
 
 
+def profile_input(name="Test User"):
+    """Supply a profile name and skip all optional profile fields."""
+    first_prompt = True
+
+    def answer(prompt):
+        nonlocal first_prompt
+        if prompt == "Profile name: " and first_prompt:
+            first_prompt = False
+            return name
+        return ""
+
+    return answer
+
+
 def test_ask_sources_supports_quoted_commas(tmp_path):
     source_one = tmp_path / "Family, Documents"
     source_two = tmp_path / "Archive"
@@ -63,7 +77,7 @@ def test_interrupted_setup_can_retry_with_same_paths(tmp_path):
     plan = make_plan(tmp_path)
     journal = installer._write_setup_progress(plan, "directories_created")
 
-    result = installer.apply_plan(plan)
+    result = installer.apply_plan(plan, input_func=profile_input())
 
     assert result["profile_id"] > 0
     assert not journal.exists()
@@ -137,7 +151,7 @@ def test_personal_setup_creates_isolated_installation(tmp_path):
     plan = make_plan(tmp_path)
     original_db_path = store.DB_PATH
 
-    result = installer.apply_plan(plan)
+    result = installer.apply_plan(plan, input_func=profile_input())
 
     assert store.DB_PATH == original_db_path
     assert result["profile_id"] > 0
@@ -158,7 +172,7 @@ def test_personal_setup_creates_isolated_installation(tmp_path):
     assert len(profile_files) == 1
 
     exported_profile = profile_files[0].read_text(encoding="utf-8")
-    assert "PROFILE_NAME=Personal" in exported_profile
+    assert "PROFILE_NAME=Test User" in exported_profile
 
     database_path = plan.database_directory / "profiles.sqlite3"
     assert database_path.is_file()
@@ -169,8 +183,13 @@ def test_personal_setup_is_idempotent(tmp_path):
     plan = make_plan(tmp_path)
     original_db_path = store.DB_PATH
 
-    first = installer.apply_plan(plan)
-    second = installer.apply_plan(plan)
+    first = installer.apply_plan(plan, input_func=profile_input())
+    second = installer.apply_plan(
+        plan,
+        input_func=lambda _: pytest.fail(
+            "Existing profile setup must not prompt again"
+        ),
+    )
 
     assert first["profile_id"] == second["profile_id"]
     assert store.DB_PATH == original_db_path
@@ -191,7 +210,9 @@ def test_profile_database_path_is_restored_after_failure(tmp_path, monkeypatch):
 
     monkeypatch.setattr(store, "initialize", fail_initialize)
 
-    with pytest.raises(RuntimeError, match="simulated database initialization failure"):
+    with pytest.raises(
+        RuntimeError, match="simulated database initialization failure"
+    ):
         installer._initialize_personal_profile(plan)
 
     assert store.DB_PATH == original_db_path
@@ -200,7 +221,7 @@ def test_profile_database_path_is_restored_after_failure(tmp_path, monkeypatch):
 def test_custom_app_data_installation_is_discoverable(tmp_path):
     plan = make_plan(tmp_path)
 
-    installer.apply_plan(plan)
+    installer.apply_plan(plan, input_func=profile_input())
 
     assert installer.find_installation_config() == plan.config_file
 

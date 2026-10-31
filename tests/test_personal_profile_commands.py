@@ -146,26 +146,45 @@ def test_profile_reset_clears_values_and_preserves_identity(
     assert (profiles_dir / "profile01.env").is_file()
 
 
-def test_profile_commands_refuse_non_personal_profile(
+def test_profile_reset_accepts_and_preserves_custom_profile_name(
     tmp_path, monkeypatch, capsys
 ):
-    _, config, database_dir, profiles_dir = make_installed_profile(
+    _, _, database_dir, profiles_dir = make_installed_profile(
         tmp_path, monkeypatch
     )
+
     old_db = store.DB_PATH
     store.DB_PATH = database_dir / "profiles.sqlite3"
     try:
         manager.save_env(
             profiles_dir / "profile01.env",
-            {"PROFILE_ID": "1", "PROFILE_NAME": "Not Personal"},
+            {
+                "PROFILE_ID": "1",
+                "PROFILE_NAME": "Not Personal",
+                "FIRST_NAME": "RUPESH",
+            },
         )
     finally:
         store.DB_PATH = old_db
 
-    with patch("builtins.input", side_effect=AssertionError("Must not prompt")):
+    with patch("builtins.input", return_value="RESET"):
         personal_cli.command_profile_reset(Namespace())
 
-    assert "not named Personal" in capsys.readouterr().out
+    output = capsys.readouterr().out
+    assert "Profile name: Not Personal" in output
+    assert "reset" in output.lower()
+
+    old_db = store.DB_PATH
+    store.DB_PATH = database_dir / "profiles.sqlite3"
+    try:
+        values = store.load_profile(1)
+    finally:
+        store.DB_PATH = old_db
+
+    assert values == {
+        "PROFILE_ID": "1",
+        "PROFILE_NAME": "Not Personal",
+    }
 
 
 def test_profile_command_without_installation_does_not_prompt(
