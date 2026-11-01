@@ -12,15 +12,14 @@ SEQUENCE_FILE = PROFILES_DIR / "profile_sequence.txt"
 PROFILE_FIELDS = (
     ("Personal", (
         "FIRST_NAME", "MIDDLE_NAME", "LAST_NAME", "MOTHER_NAME",
-        "BIRTH_DAY", "BIRTH_MONTH", "BIRTH_YEAR", "PINCODE",
+        "BIRTH_DAY", "BIRTH_MONTH", "BIRTH_YEAR", "PINCODE", "TITLE",
     )),
-    ("Identity", (
-        "PAN", "AADHAAR_FIRST4", "AADHAAR_LAST4",
-    )),
+    ("Identity", ("PAN", "AADHAAR_FIRST4", "AADHAAR_LAST4")),
     ("Financial", ("ACCOUNT_TITLE",)),
     ("Benefits & Retirement", ()),
-    ("Tax & Business", ()) ,
+    ("Tax & Business", ()),
 )
+
 
 REPEATABLE_FIELDS = (
     ("Personal", "mobile number", "MOBILE"),
@@ -308,91 +307,165 @@ def normalize_country_calling_code(value: str) -> str | None:
     return f"+{digits}"
 
 
+def _luhn_valid(number: str) -> bool:
+    total = 0
+    for index, char in enumerate(number[::-1]):
+        digit = int(char)
+        if index % 2:
+            digit *= 2
+            if digit > 9:
+                digit -= 9
+        total += digit
+    return total % 10 == 0
+
+
+def _normalize_mobile(value: str) -> str | None:
+    value = re.sub(r"[\s().-]", "", value)
+    if value.startswith("00"):
+        value = "+" + value[2:]
+
+    if value.startswith("+"):
+        digits = value[1:]
+    else:
+        digits = value
+        if digits.startswith("0") and len(digits) == 11:
+            digits = digits[1:]
+        digits = "91" + digits
+
+    if not digits.isdigit() or not 7 <= len(digits) <= 15:
+        print("Mobile number must contain 7 to 15 digits.")
+        return None
+
+    if not any(
+        digits.startswith(code)
+        for code in sorted(VALID_COUNTRY_CALLING_CODES, key=len, reverse=True)
+    ):
+        print("Invalid international country calling code.")
+        return None
+    return "+" + digits
+
+
 def normalize_and_validate(field: str, value: str) -> str | None:
     value = value.strip()
-
     if not value:
         return ""
 
-    if field in {
-        "FIRST_NAME", "MIDDLE_NAME", "LAST_NAME", "PAN",
-        "IFSC", "CIF", "UAN", "PRAN", "TAN", "GSTIN",
-        "POLICY_NUMBER", "PPO_NUMBER", "EMPLOYEE_ID", "ROLL_NUMBER",
-        "ACCOUNT_TITLE", "MOTHER_NAME",
-    } or field.startswith(("EMAIL_", "IFSC_", "CIF_", "UAN_", "PRAN_", "TAN_", "GSTIN_", "POLICY_NUMBER_", "PPO_NUMBER_", "EMPLOYEE_ID_", "ROLL_NUMBER_")):
-        return value.upper()
+    base = re.sub(r"_\d+$", "", field)
 
-    if field in {"BIRTH_DAY", "BIRTH_MONTH", "BIRTH_YEAR", "PINCODE",
-                 "AADHAAR_FIRST4", "AADHAAR_LAST4"}:
-        if not value.isdigit():
-            print(f"{field} must contain digits only.")
+    if base == "TITLE":
+        normalized = value.upper()
+        if normalized not in {"MR", "MRS", "MS", "MISS", "DR", "OTHER"}:
+            print("Choose one of: Mr, Mrs, Ms, Miss, Dr, Other.")
             return None
+        return "Dr" if normalized == "DR" else normalized.title()
 
-        if field == "BIRTH_DAY" and not 1 <= int(value) <= 31:
+    if base == "EMAIL":
+        if value.count("@") != 1 or any(c.isspace() for c in value):
+            print("Enter a valid email address.")
+            return None
+        local, domain = value.rsplit("@", 1)
+        if not local or len(local) > 64 or not domain or "." not in domain:
+            print("Enter a valid email address.")
+            return None
+        if local.startswith(".") or local.endswith(".") or ".." in local:
+            print("Enter a valid email address.")
+            return None
+        try:
+            ascii_domain = domain.encode("idna").decode("ascii")
+        except UnicodeError:
+            print("Invalid email domain.")
+            return None
+        labels = ascii_domain.split(".")
+        if (
+            len(ascii_domain) > 253 or len(labels[-1]) < 2 or
+            any(
+                not label or len(label) > 63 or label.startswith("-") or
+                label.endswith("-") or not re.fullmatch(r"[A-Za-z0-9-]+", label)
+                for label in labels
+            )
+        ):
+            print("Invalid email domain.")
+            return None
+        return f"{local}@{domain}".lower()
+
+    if base == "PAN":
+        normalized = value.upper()
+        if not re.fullmatch(r"[A-Z]{5}[0-9]{4}[A-Z]", normalized):
+            print("PAN must use the format ABCDE1234F.")
+            return None
+        return normalized
+
+    if base == "PINCODE":
+        normalized = re.sub(r"\s+", " ", value).strip()
+        compact = normalized.replace(" ", "").replace("-", "")
+        if (
+            not 2 <= len(compact) <= 12 or
+            not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9 -]*[A-Za-z0-9]", normalized)
+        ):
+            print("Enter a valid international postal or ZIP code.")
+            return None
+        return normalized.upper()
+
+    if base == "MOBILE":
+        return _normalize_mobile(value)
+
+    if base == "ACCOUNT_NUMBER":
+        normalized = re.sub(r"[\s-]", "", value).upper()
+        if (
+            not 4 <= len(normalized) <= 34 or
+            not normalized.isalnum() or
+            not any(c.isdigit() for c in normalized)
+        ):
+            print("Account number must contain 4 to 34 letters or digits, including a digit.")
+            return None
+        return normalized
+
+    if base == "CREDIT_CARD_NUMBER":
+        normalized = re.sub(r"[\s-]", "", value)
+        if not normalized.isdigit() or not 12 <= len(normalized) <= 19:
+            print("Card number must contain 12 to 19 digits.")
+            return None
+        if not _luhn_valid(normalized):
+            print("Card number failed the Luhn checksum.")
+            return None
+        return normalized
+
+    if base in {"BIRTH_DAY", "BIRTH_MONTH", "BIRTH_YEAR",
+                "AADHAAR_FIRST4", "AADHAAR_LAST4"}:
+        if not value.isdigit():
+            print(f"{base} must contain digits only.")
+            return None
+        if base == "BIRTH_DAY" and not 1 <= int(value) <= 31:
             print("BIRTH_DAY must be between 1 and 31.")
             return None
-
-        if field == "BIRTH_MONTH" and not 1 <= int(value) <= 12:
+        if base == "BIRTH_MONTH" and not 1 <= int(value) <= 12:
             print("BIRTH_MONTH must be between 1 and 12.")
             return None
-
-        if field == "BIRTH_YEAR" and len(value) != 4:
+        if base == "BIRTH_YEAR" and len(value) != 4:
             print("BIRTH_YEAR must contain exactly 4 digits.")
             return None
-
-        if field == "PINCODE" and len(value) != 6:
-            print("PINCODE must contain exactly 6 digits.")
+        if base in {"AADHAAR_FIRST4", "AADHAAR_LAST4"} and len(value) != 4:
+            print(f"{base} must contain exactly 4 digits.")
             return None
-
-        if field in {"AADHAAR_FIRST4", "AADHAAR_LAST4"} and len(value) != 4:
-            print(f"{field} must contain exactly 4 digits.")
-            return None
-
         return value
 
-    if field.startswith("MOBILE_"):
-        if not value.startswith("+"):
-            print("Mobile number must include country code, for example +91.")
+    if base in {"FIRST_NAME", "MIDDLE_NAME", "LAST_NAME", "MOTHER_NAME"}:
+        if not all(c.isalpha() or c.isspace() or c in "'’-"
+                   for c in value):
+            print(f"{base} may contain letters, spaces, apostrophes, and hyphens only.")
             return None
-
-        digits = value[1:].replace(" ", "").replace("-", "")
-
-        if not digits.isdigit():
-            print("Mobile number must contain + followed by digits.")
-            return None
-
-        if not 7 <= len(digits) <= 15:
-            print("Mobile number must contain 7 to 15 digits after the country code.")
-            return None
-
-        return f"+{digits}"
-
-    if field.startswith("ACCOUNT_NUMBER_"):
-        value = value.replace(" ", "").replace("-", "")
-
-        if not value.isdigit():
-            print("Account number must contain digits only.")
-            return None
-
-        return value
-
-    if field.startswith("CREDIT_CARD_NUMBER_"):
-        value = value.replace(" ", "").replace("-", "")
-
-        if not value.isdigit():
-            print("Credit card number must contain digits only.")
-            return None
-
-        if len(value) != 16:
-            print("Credit card number must contain exactly 16 digits.")
-            return None
-
-        return value
-
-    if field.startswith("CUSTOMER_ID_"):
         return value.upper()
 
+    uppercase_fields = {
+        "IFSC", "CIF", "UAN", "PRAN", "TAN", "GSTIN",
+        "POLICY_NUMBER", "PPO_NUMBER", "EMPLOYEE_ID",
+        "ROLL_NUMBER", "ACCOUNT_TITLE", "CUSTOMER_ID",
+    }
+    if base in uppercase_fields:
+        return value.upper()
     return value
+
+
 
 
 def collect_fixed_fields(
@@ -400,48 +473,48 @@ def collect_fixed_fields(
     modifying: bool = False,
     input_func=input,
 ) -> None:
+    from pdfunlocker.profiles import store
+
     values = existing if existing is not None else {}
+    definitions = {
+        item["field_key"]: int(item["field_number"])
+        for item in store.list_fields(include_archived=True)
+    }
 
     for section, fields in PROFILE_FIELDS:
         print(f"--- {section} ---")
-
         for field in fields:
+            number = definitions.get(field)
+            code = f"{number:03d}" if number is not None else "---"
             current = values.get(field, "")
+            hint = " (Mr/Mrs/Ms/Miss/Dr/Other)" if field == "TITLE" else ""
 
             if modifying and current:
                 while True:
-                    value = input_func(
-                        f"{field} [{current}] "
-                        "(Enter=keep, -=clear): "
+                    answer = input_func(
+                        f"{code} {field}{hint} [{current}] (Enter=keep, -=clear): "
                     ).strip()
-
-                    if not value:
+                    if not answer:
                         break
-
-                    if value == "-":
+                    if answer == "-":
                         values.pop(field, None)
                         break
-
-                    normalized = normalize_and_validate(field, value)
-
+                    normalized = normalize_and_validate(field, answer)
                     if normalized is not None:
                         values[field] = normalized
                         break
-
             else:
                 while True:
-                    value = input_func(f"{field}: ").strip()
-
-                    if not value:
+                    answer = input_func(f"{code} {field}{hint}: ").strip()
+                    if not answer:
                         break
-
-                    normalized = normalize_and_validate(field, value)
-
+                    normalized = normalize_and_validate(field, answer)
                     if normalized is not None:
                         values[field] = normalized
                         break
-
         print()
+
+
 
 
 def collect_repeatable_fields(
@@ -481,57 +554,40 @@ def collect_repeatable_fields(
                 sequence = 1 if field == prefix else int(field.rsplit("_", 1)[1])
                 code = store.value_code(field_number, sequence, True)
                 while True:
-                    value = input_func(
-                        f"{code} {label.title()} [{values[field]}] "
-                        "(Enter=keep, -=clear): "
+                    answer = input_func(
+                        f"{code} {label.title()} [{values[field]}] (Enter=keep, -=clear): "
                     ).strip()
-                    if not value:
+                    if not answer:
                         break
-                    if value == "-":
+                    if answer == "-":
                         values.pop(field, None)
                         break
-                    normalized = normalize_and_validate(field, value)
-                    if normalized is None:
-                        continue
-                    values[field] = normalized
-                    break
+                    normalized = normalize_and_validate(field, answer)
+                    if normalized is not None:
+                        values[field] = normalized
+                        break
             print("Add new values below. Press Enter on an empty value to stop.")
 
         sequence = store.next_value_sequence(profile_id, prefix, values)
         while True:
             field = f"{prefix}_{sequence:02d}"
             code = store.value_code(field_number, sequence, True)
-
-            if prefix == "MOBILE":
-                while True:
-                    country_code_input = input_func(
-                        f"{code} Mobile country code [default +91]: "
-                    ).strip()
-                    country_code = normalize_country_calling_code(
-                        country_code_input
-                    )
-                    if country_code is not None:
-                        break
-
-                number_text = input_func(
-                    f"{code} Mobile number: "
-                ).strip()
-                if not number_text:
-                    break
-                normalized = normalize_and_validate(
-                    field, f"{country_code}{number_text}"
-                )
-            else:
-                value = input_func(f"{code} {label.title()}: ").strip()
-                if not value:
-                    break
-                normalized = normalize_and_validate(field, value)
-
+            prompt = (
+                f"{code} Mobile number (default country +91): "
+                if prefix == "MOBILE"
+                else f"{code} {label.title()}: "
+            )
+            answer = input_func(prompt).strip()
+            if not answer:
+                break
+            normalized = normalize_and_validate(field, answer)
             if normalized is None:
                 continue
             values[field] = normalized
             sequence += 1
         print()
+
+
 
 
 def collect_custom_fields(

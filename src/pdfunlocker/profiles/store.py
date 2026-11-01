@@ -160,6 +160,28 @@ def initialize() -> None:
                            (number, key, label, category, int(multiple), int(archived), now))
                 db.execute("UPDATE field_definitions SET label=?,category=?,allows_multiple=?,archived=?,is_builtin=1,is_custom=0 WHERE field_key=?",
                            (label, category, int(multiple), int(archived), key))
+        title_row = db.execute(
+            "SELECT field_number FROM field_definitions WHERE field_key='TITLE'"
+        ).fetchone()
+        if title_row is None:
+            title_number = int(
+                db.execute(
+                    "SELECT COALESCE(MAX(field_number),0)+1 AS n FROM field_definitions"
+                ).fetchone()["n"]
+            )
+            db.execute(
+                "INSERT INTO field_definitions"
+                "(field_number,field_key,label,category,allows_multiple,archived,is_builtin,is_custom,created_at) "
+                "VALUES(?, 'TITLE', 'Title', 'Personal', 0, 0, 1, 0, ?)",
+                (title_number, now),
+            )
+        else:
+            db.execute(
+                "UPDATE field_definitions SET label='Title',category='Personal',"
+                "allows_multiple=0,archived=0,is_builtin=1,is_custom=0 "
+                "WHERE field_key='TITLE'"
+            )
+
         db.execute("INSERT OR REPLACE INTO schema_metadata(key,value) VALUES('schema_version','2')")
         try:
             DB_PATH.chmod(0o600)
@@ -198,6 +220,7 @@ def ensure_field(field_key: str, label: str | None = None, allows_multiple: bool
     if label is None:
         label = base.replace("_", " ").title()
     with _connect() as db:
+        db.execute("BEGIN IMMEDIATE")
         row = db.execute("SELECT field_number FROM field_definitions WHERE field_key=?", (base,)).fetchone()
         if row:
             return int(row["field_number"])
@@ -269,6 +292,7 @@ def save_profile(path: Path, values: dict[str, str]) -> None:
     pid = int(pid_text)
     now = _now()
     with _connect() as db:
+        db.execute("BEGIN IMMEDIATE")
         db.execute(
             "INSERT INTO profiles(profile_id,name,legacy_path,created_at,updated_at) VALUES(?,?,?,?,?) "
             "ON CONFLICT(profile_id) DO UPDATE SET name=excluded.name,legacy_path=excluded.legacy_path,updated_at=excluded.updated_at",
