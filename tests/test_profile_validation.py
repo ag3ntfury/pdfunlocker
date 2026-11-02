@@ -1,4 +1,4 @@
-from pdfunlocker.profiles import manager, store
+from pdfunlocker.profiles import manager, store, validation
 
 
 def test_optional_empty_value_is_skipped():
@@ -58,10 +58,57 @@ def test_title_choices():
     assert manager.normalize_and_validate("TITLE", "invalid") is None
 
 
-def test_unicode_person_name():
-    assert manager.normalize_and_validate("FIRST_NAME", "José O’Connor-Smith") == "JOSÉ O’CONNOR-SMITH"
+def test_english_person_name_preserves_case_and_allows_periods():
+    assert manager.normalize_and_validate("FIRST_NAME", "Rupesh Bhadarka") == "Rupesh Bhadarka"
+    assert manager.normalize_and_validate("MIDDLE_NAME", "R. K.") == "R. K."
     assert manager.normalize_and_validate("FIRST_NAME", "John123") is None
+    assert manager.normalize_and_validate("FIRST_NAME", "José") is None
+    assert manager.normalize_and_validate("LAST_NAME", "O'Connor") is None
+    assert manager.normalize_and_validate("LAST_NAME", "Anne-Marie") is None
 
+
+def test_financial_identifier_strict_formats():
+    assert manager.normalize_and_validate("IFSC_01", "hdfc0001234") == "HDFC0001234"
+    assert manager.normalize_and_validate("IFSC_01", "HDFC1234567") is None
+    assert manager.normalize_and_validate("GSTIN_01", "27AAPFU0939F1ZV") == "27AAPFU0939F1ZV"
+    assert manager.normalize_and_validate("GSTIN_01", "27AAPFU0939F1XV") is None
+    assert manager.normalize_and_validate("TAN_01", "muma12345b") == "MUMA12345B"
+    assert manager.normalize_and_validate("TAN_01", "MUMA1234B") is None
+    assert manager.normalize_and_validate("UAN_01", "123456789012") == "123456789012"
+    assert manager.normalize_and_validate("UAN_01", "12345678901") is None
+    assert manager.normalize_and_validate("PRAN_01", "123456789012") == "123456789012"
+
+
+def test_institution_specific_identifiers_are_flexible():
+    assert manager.normalize_and_validate("CIF_01", "ab/123-xy") == "AB/123-XY"
+    assert manager.normalize_and_validate("CUSTOMER_ID_01", "cust. 123") == "CUST.123"
+    assert manager.normalize_and_validate("POLICY_NUMBER_01", "pl/2026-001") == "PL/2026-001"
+    assert manager.normalize_and_validate("PPO_NUMBER_01", "PPO 123") == "PPO123"
+
+
+def test_custom_values_preserve_unicode_and_capitalization():
+    assert manager.normalize_and_validate("FAMILY_NOTE", "  માતા નું નામ  ") == "માતા નું નામ"
+
+
+def test_date_of_birth_is_checked_only_when_complete():
+    assert manager.validate_profile_values({"BIRTH_DAY": "31", "BIRTH_MONTH": "2"}) == []
+    assert manager.validate_profile_values({
+        "BIRTH_DAY": "29", "BIRTH_MONTH": "2", "BIRTH_YEAR": "2024"
+    }) == []
+    errors = manager.validate_profile_values({
+        "BIRTH_DAY": "31", "BIRTH_MONTH": "2", "BIRTH_YEAR": "2025"
+    })
+    assert any("DATE_OF_BIRTH" in error for error in errors)
+
+
+def test_account_title_is_not_an_active_input_field_but_legacy_value_is_ignored():
+    assert all("ACCOUNT_TITLE" not in fields for _section, fields in manager.PROFILE_FIELDS)
+    assert manager.validate_profile_values({"ACCOUNT_TITLE": "Legacy Name"}) == []
+
+
+def test_public_field_validator_is_non_interactive():
+    assert manager.validate_field_value("FIRST_NAME", "Rupesh") == ("Rupesh", None)
+    assert manager.validate_field_value("PAN", "bad") == (None, "PAN must use the format ABCDE1234F.")
 
 def test_title_gets_permanent_global_field_id(tmp_path, monkeypatch):
     old_path = store.DB_PATH
@@ -136,3 +183,22 @@ def test_custom_repeatable_suffix_is_not_reused_after_deletion(tmp_path, monkeyp
     store.save_profile(profile_path, updated)
 
     assert store.next_value_sequence(102, field_key, updated) == 2
+
+
+def test_mobile_accepts_indian_number_with_explicit_country_code_without_plus():
+    assert manager.normalize_and_validate("MOBILE_01", "919876543210") == "+919876543210"
+
+
+def test_profile_validation_checks_repeatable_and_custom_values():
+    errors = manager.validate_profile_values({
+        "FIRST_NAME": "Rupesh",
+        "PAN": "ABCDE1234F",
+        "MOBILE_01": "+919876543210",
+        "TRAVEL_NOTE_01": "ગુજરાત",
+    })
+    assert errors == []
+
+
+def test_validation_module_is_independent_and_public():
+    assert validation.validate_field_value("FIRST_NAME", "Rupesh") == ("Rupesh", None)
+    assert validation.validate_profile_values({"PAN": "ABCDE1234F"}) == []

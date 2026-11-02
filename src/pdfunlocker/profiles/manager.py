@@ -6,6 +6,10 @@ import re
 from pathlib import Path
 
 from pdfunlocker.paths import APP_DIR, PROFILES_DIR  # noqa: F401
+from pdfunlocker.profiles.validation import (
+    VALID_COUNTRY_CALLING_CODES, normalize_country_calling_code,
+    validate_field_value, validate_profile_values,
+)
 
 SEQUENCE_FILE = PROFILES_DIR / "profile_sequence.txt"
 
@@ -15,7 +19,7 @@ PROFILE_FIELDS = (
         "BIRTH_DAY", "BIRTH_MONTH", "BIRTH_YEAR", "PINCODE", "TITLE",
     )),
     ("Identity", ("PAN", "AADHAAR_FIRST4", "AADHAAR_LAST4")),
-    ("Financial", ("ACCOUNT_TITLE",)),
+    ("Financial", ()),
     ("Benefits & Retirement", ()),
     ("Tax & Business", ()),
 )
@@ -259,214 +263,18 @@ def ask_profile_name(input_func=input) -> str:
         return name
 
 
-# ITU-assigned international country calling codes.
-VALID_COUNTRY_CALLING_CODES = frozenset("""
-1 7 20 27 30 31 32 33 34 36 39 40 41 43 44 45 46 47 48 49
-51 52 53 54 55 56 57 58 60 61 62 63 64 65 66 81 82 84 86
-90 91 92 93 94 95 98
-211 212 213 216 218
-220 221 222 223 224 225 226 227 228 229
-230 231 232 233 234 235 236 237 238 239
-240 241 242 243 244 245 246 247 248 249
-250 251 252 253 254 255 256 257 258 260
-261 262 263 264 265 266 267 268 269
-290 291 297 298 299
-350 351 352 353 354 355 356 357 358 359
-370 371 372 373 374 375 376 377 378 380
-381 382 383 385 386 387 389
-420 421 423
-500 501 502 503 504 505 506 507 508 509
-590 591 592 593 594 595 596 597 598 599
-670 672 673 674 675 676 677 678 679
-680 681 682 683 685 686 687 688 689 690
-691 692
-850 852 853 855 856 880 886
-960 961 962 963 964 965 966 967 968 970
-971 972 973 974 975 976 977
-992 993 994 995 996 998
-""".split())
-
-
-def normalize_country_calling_code(value: str) -> str | None:
-    """Normalize and validate an international country calling code."""
-    value = value.strip()
-
-    if not value:
-        return "+91"
-
-    if not re.fullmatch(r"\+?[0-9]{1,3}", value):
-        print("Invalid country calling code. Enter a valid code, such as 91 or 92.")
-        return None
-
-    digits = value.removeprefix("+")
-
-    if digits not in VALID_COUNTRY_CALLING_CODES:
-        print("Invalid country calling code. Enter a valid code, such as 91 or 92.")
-        return None
-
-    return f"+{digits}"
-
-
-def _luhn_valid(number: str) -> bool:
-    total = 0
-    for index, char in enumerate(number[::-1]):
-        digit = int(char)
-        if index % 2:
-            digit *= 2
-            if digit > 9:
-                digit -= 9
-        total += digit
-    return total % 10 == 0
-
-
-def _normalize_mobile(value: str) -> str | None:
-    value = re.sub(r"[\s().-]", "", value)
-    if value.startswith("00"):
-        value = "+" + value[2:]
-
-    if value.startswith("+"):
-        digits = value[1:]
-    else:
-        digits = value
-        if digits.startswith("0") and len(digits) == 11:
-            digits = digits[1:]
-        digits = "91" + digits
-
-    if not digits.isdigit() or not 7 <= len(digits) <= 15:
-        print("Mobile number must contain 7 to 15 digits.")
-        return None
-
-    if not any(
-        digits.startswith(code)
-        for code in sorted(VALID_COUNTRY_CALLING_CODES, key=len, reverse=True)
-    ):
-        print("Invalid international country calling code.")
-        return None
-    return "+" + digits
-
-
 def normalize_and_validate(field: str, value: str) -> str | None:
-    value = value.strip()
-    if not value:
-        return ""
-
-    base = re.sub(r"_\d+$", "", field)
-
-    if base == "TITLE":
-        normalized = value.upper()
-        if normalized not in {"MR", "MRS", "MS", "MISS", "DR", "OTHER"}:
-            print("Choose one of: Mr, Mrs, Ms, Miss, Dr, Other.")
-            return None
-        return "Dr" if normalized == "DR" else normalized.title()
-
-    if base == "EMAIL":
-        if value.count("@") != 1 or any(c.isspace() for c in value):
-            print("Enter a valid email address.")
-            return None
-        local, domain = value.rsplit("@", 1)
-        if not local or len(local) > 64 or not domain or "." not in domain:
-            print("Enter a valid email address.")
-            return None
-        if local.startswith(".") or local.endswith(".") or ".." in local:
-            print("Enter a valid email address.")
-            return None
-        try:
-            ascii_domain = domain.encode("idna").decode("ascii")
-        except UnicodeError:
-            print("Invalid email domain.")
-            return None
-        labels = ascii_domain.split(".")
-        if (
-            len(ascii_domain) > 253 or len(labels[-1]) < 2 or
-            any(
-                not label or len(label) > 63 or label.startswith("-") or
-                label.endswith("-") or not re.fullmatch(r"[A-Za-z0-9-]+", label)
-                for label in labels
-            )
-        ):
-            print("Invalid email domain.")
-            return None
-        return f"{local}@{domain}".lower()
-
-    if base == "PAN":
-        normalized = value.upper()
-        if not re.fullmatch(r"[A-Z]{5}[0-9]{4}[A-Z]", normalized):
-            print("PAN must use the format ABCDE1234F.")
-            return None
-        return normalized
-
-    if base == "PINCODE":
-        normalized = re.sub(r"\s+", " ", value).strip()
-        compact = normalized.replace(" ", "").replace("-", "")
-        if (
-            not 2 <= len(compact) <= 12 or
-            not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9 -]*[A-Za-z0-9]", normalized)
-        ):
-            print("Enter a valid international postal or ZIP code.")
-            return None
-        return normalized.upper()
-
-    if base == "MOBILE":
-        return _normalize_mobile(value)
-
-    if base == "ACCOUNT_NUMBER":
-        normalized = re.sub(r"[\s-]", "", value).upper()
-        if (
-            not 4 <= len(normalized) <= 34 or
-            not normalized.isalnum() or
-            not any(c.isdigit() for c in normalized)
-        ):
-            print("Account number must contain 4 to 34 letters or digits, including a digit.")
-            return None
-        return normalized
-
-    if base == "CREDIT_CARD_NUMBER":
-        normalized = re.sub(r"[\s-]", "", value)
-        if not normalized.isdigit() or not 12 <= len(normalized) <= 19:
-            print("Card number must contain 12 to 19 digits.")
-            return None
-        if not _luhn_valid(normalized):
-            print("Card number failed the Luhn checksum.")
-            return None
-        return normalized
-
-    if base in {"BIRTH_DAY", "BIRTH_MONTH", "BIRTH_YEAR",
-                "AADHAAR_FIRST4", "AADHAAR_LAST4"}:
-        if not value.isdigit():
-            print(f"{base} must contain digits only.")
-            return None
-        if base == "BIRTH_DAY" and not 1 <= int(value) <= 31:
-            print("BIRTH_DAY must be between 1 and 31.")
-            return None
-        if base == "BIRTH_MONTH" and not 1 <= int(value) <= 12:
-            print("BIRTH_MONTH must be between 1 and 12.")
-            return None
-        if base == "BIRTH_YEAR" and len(value) != 4:
-            print("BIRTH_YEAR must contain exactly 4 digits.")
-            return None
-        if base in {"AADHAAR_FIRST4", "AADHAAR_LAST4"} and len(value) != 4:
-            print(f"{base} must contain exactly 4 digits.")
-            return None
-        return value
-
-    if base in {"FIRST_NAME", "MIDDLE_NAME", "LAST_NAME", "MOTHER_NAME"}:
-        if not all(c.isalpha() or c.isspace() or c in "'’-"
-                   for c in value):
-            print(f"{base} may contain letters, spaces, apostrophes, and hyphens only.")
-            return None
-        return value.upper()
-
-    uppercase_fields = {
-        "IFSC", "CIF", "UAN", "PRAN", "TAN", "GSTIN",
-        "POLICY_NUMBER", "PPO_NUMBER", "EMPLOYEE_ID",
-        "ROLL_NUMBER", "ACCOUNT_TITLE", "CUSTOMER_ID",
-    }
-    if base in uppercase_fields:
-        return value.upper()
-    return value
+    """Personal Mode compatibility wrapper around the reusable validator."""
+    normalized, error = validate_field_value(field, value)
+    if error:
+        print(error)
+    return normalized
 
 
-
+def _retry_or_skip(input_func=input) -> bool:
+    """Return True to retry an invalid value; Enter skips the current field."""
+    answer = input_func("Invalid value. Enter R to retry, or press Enter to skip: ")
+    return answer.strip().casefold() in {"r", "retry"}
 
 def collect_fixed_fields(
     existing: dict[str, str] | None = None,
@@ -489,8 +297,8 @@ def collect_fixed_fields(
             current = values.get(field, "")
             hint = " (Mr/Mrs/Ms/Miss/Dr/Other)" if field == "TITLE" else ""
 
-            if modifying and current:
-                while True:
+            while True:
+                if modifying and current:
                     answer = input_func(
                         f"{code} {field}{hint} [{current}] (Enter=keep, -=clear): "
                     ).strip()
@@ -499,23 +307,18 @@ def collect_fixed_fields(
                     if answer == "-":
                         values.pop(field, None)
                         break
-                    normalized = normalize_and_validate(field, answer)
-                    if normalized is not None:
-                        values[field] = normalized
-                        break
-            else:
-                while True:
+                else:
                     answer = input_func(f"{code} {field}{hint}: ").strip()
                     if not answer:
                         break
-                    normalized = normalize_and_validate(field, answer)
-                    if normalized is not None:
-                        values[field] = normalized
-                        break
+
+                normalized = normalize_and_validate(field, answer)
+                if normalized is not None:
+                    values[field] = normalized
+                    break
+                if not _retry_or_skip(input_func):
+                    break
         print()
-
-
-
 
 def collect_repeatable_fields(
     values: dict[str, str],
@@ -566,6 +369,8 @@ def collect_repeatable_fields(
                     if normalized is not None:
                         values[field] = normalized
                         break
+                    if not _retry_or_skip(input_func):
+                        break
             print("Add new values below. Press Enter on an empty value to stop.")
 
         sequence = store.next_value_sequence(profile_id, prefix, values)
@@ -582,13 +387,12 @@ def collect_repeatable_fields(
                 break
             normalized = normalize_and_validate(field, answer)
             if normalized is None:
-                continue
+                if _retry_or_skip(input_func):
+                    continue
+                break
             values[field] = normalized
             sequence += 1
         print()
-
-
-
 
 def collect_custom_fields(
     values: dict[str, str],
@@ -628,52 +432,63 @@ def collect_custom_fields(
             )
 
             for old_key in existing_keys:
-                current = values[old_key]
                 if not modifying:
                     continue
-                answer = input_func(
-                    f"{store.value_code(number, int(old_key.rsplit('_', 1)[1]), True)} "
-                    f"{label} [{current}] (Enter=keep, -=clear): "
-                ).strip()
-                if answer == "-":
-                    values.pop(old_key, None)
-                elif answer:
+                current = values[old_key]
+                while True:
+                    answer = input_func(
+                        f"{store.value_code(number, int(old_key.rsplit('_', 1)[1]), True)} "
+                        f"{label} [{current}] (Enter=keep, -=clear): "
+                    ).strip()
+                    if not answer:
+                        break
+                    if answer == "-":
+                        values.pop(old_key, None)
+                        break
                     normalized = normalize_and_validate(old_key, answer)
                     if normalized is not None:
                         values[old_key] = normalized
+                        break
+                    if not _retry_or_skip(input_func):
+                        break
 
             sequence = store.next_value_sequence(profile_id, key, values)
             while True:
                 answer = input_func(
-                    f"{store.value_code(number, sequence, True)} "
-                    f"{label}: "
+                    f"{store.value_code(number, sequence, True)} {label}: "
                 ).strip()
                 if not answer:
                     break
-                normalized = normalize_and_validate(
-                    f"{key}_{sequence:02d}", answer
-                )
+                field = f"{key}_{sequence:02d}"
+                normalized = normalize_and_validate(field, answer)
                 if normalized is None:
-                    continue
-                values[f"{key}_{sequence:02d}"] = normalized
+                    if _retry_or_skip(input_func):
+                        continue
+                    break
+                values[field] = normalized
                 sequence += 1
         else:
             current = values.get(key, "")
-            prompt = (
-                f"{store.value_code(number)} {label} "
-                f"[{current}] (Enter=keep, -=clear): "
-                if modifying and current
-                else f"{store.value_code(number)} {label}: "
-            )
-            answer = input_func(prompt).strip()
-            if modifying and answer == "-":
-                values.pop(key, None)
-            elif answer:
+            while True:
+                prompt = (
+                    f"{store.value_code(number)} {label} "
+                    f"[{current}] (Enter=keep, -=clear): "
+                    if modifying and current
+                    else f"{store.value_code(number)} {label}: "
+                )
+                answer = input_func(prompt).strip()
+                if modifying and current and answer == "-":
+                    values.pop(key, None)
+                    break
+                if not answer:
+                    break
                 normalized = normalize_and_validate(key, answer)
                 if normalized is not None:
                     values[key] = normalized
+                    break
+                if not _retry_or_skip(input_func):
+                    break
     print()
-
 
 def collect_profile_values(
     existing: dict[str, str] | None = None,
@@ -888,48 +703,13 @@ def validate_profile(profile_id: int) -> bool:
     elif not valid_profile_name(profile_name):
         errors.append("PROFILE_NAME is invalid.")
 
-    for section, fields in PROFILE_FIELDS:
-        for field in fields:
-            if field not in values:
-                continue
-
-            value = values[field]
-            normalized = normalize_and_validate(field, value)
-
-            if normalized is None:
-                errors.append(f"{field}: invalid value.")
-
-    for _section, _label, prefix in REPEATABLE_FIELDS:
-        fields = sorted(
-            (
-                key
-                for key in values
-                if key.startswith(f"{prefix}_")
-                and key[len(prefix) + 1:].isdigit()
-            ),
-            key=lambda key: int(key.rsplit("_", 1)[1]),
-        )
-
-        for field in fields:
-            value = values[field]
-            normalized = normalize_and_validate(field, value)
-
-            if normalized is None:
-                errors.append(f"{field}: invalid value.")
-                continue
-
-            if normalized != value:
-                errors.append(
-                    f"{field}: normalization required."
-                )
+    errors.extend(validate_profile_values(values))
 
     if errors:
         print("INVALID")
         print()
-
         for error in errors:
             print(f"- {error}")
-
         print()
         print(f"Total errors: {len(errors)}")
         return False
@@ -938,7 +718,6 @@ def validate_profile(profile_id: int) -> bool:
     print()
     print("All stored profile values pass the current validation rules.")
     return True
-
 
 def modify_profile(profile_id: int) -> None:
     result = get_profile(profile_id)
