@@ -67,10 +67,12 @@ def test_pan_format():
     assert manager.normalize_and_validate("PAN", "ABCDE12345") is None
 
 
-def test_international_postal_codes():
+def test_indian_and_explicit_international_postal_codes():
     assert manager.normalize_and_validate("PINCODE", "361305") == "361305"
-    assert manager.normalize_and_validate("PINCODE", "SW1A 1AA") == "SW1A 1AA"
-    assert manager.normalize_and_validate("PINCODE", "90210") == "90210"
+    assert manager.normalize_and_validate("PINCODE", "GB:SW1A 1AA") == "GB:SW1A 1AA"
+    assert manager.normalize_and_validate("PINCODE", "US:90210") == "US:90210"
+    assert manager.normalize_and_validate("PINCODE", "90210") is None
+    assert manager.normalize_and_validate("PINCODE", "000000") is None
 
 
 def test_credit_card_luhn_validation():

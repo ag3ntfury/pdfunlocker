@@ -11,6 +11,7 @@ import yaml
 
 
 from pdfunlocker.paths import RULES_DIR
+from pdfunlocker.profiles.registry import normalize_field_id
 
 
 class RuleError(ValueError):
@@ -22,6 +23,7 @@ class FieldPart:
     field_id: str
     mode: str = "full"
     count: int | None = None
+    format: str | None = None
 
 
 @dataclass(frozen=True)
@@ -193,11 +195,16 @@ def _parse_rule(path: Path) -> Rule:
             if not isinstance(item, dict):
                 raise RuleError(f"{path.name}: field item {index} must be a mapping")
             raw_id = item.get("field_id")
-            if isinstance(raw_id, int):
-                raw_id = str(raw_id)
-            if not isinstance(raw_id, str) or not raw_id.isdigit() or not 1 <= int(raw_id) <= 999:
+            field_id = normalize_field_id(raw_id)
+            if field_id is None:
                 raise RuleError(f"{path.name}: field item {index} has invalid field_id")
-            field_id = f"{int(raw_id):03d}"
+            field_format = item.get("format")
+            if field_format is not None:
+                if not isinstance(field_format, str) or field_format.upper() not in {
+                    "DDMM", "DDMMYY", "DDMMYYYY", "MMDD", "YYYY", "YYYYMMDD"
+                }:
+                    raise RuleError(f"{path.name}: field item {index} has invalid date format")
+                field_format = field_format.upper()
             slice_data = item.get("slice", {"mode": "full"})
             if isinstance(slice_data, str):
                 slice_data = {"mode": slice_data}
@@ -216,7 +223,7 @@ def _parse_rule(path: Path) -> Rule:
                     part_count = int(part_count)
                 if not isinstance(part_count, int) or isinstance(part_count, bool) or not 1 <= part_count <= 256:
                     raise RuleError(f"{path.name}: first/last slice count must be an integer from 1 to 256")
-            fields.append(FieldPart(field_id=field_id, mode=mode, count=part_count))
+            fields.append(FieldPart(field_id=field_id, mode=mode, count=part_count, format=field_format))
     else:
         raise RuleError(f"{path.name}: pattern must contain 'fields' or legacy 'components'")
 
@@ -355,8 +362,8 @@ def _profile_fields() -> list[dict[str, Any]]:
 def _field_index() -> dict[str, dict[str, Any]]:
     result: dict[str, dict[str, Any]] = {}
     for field in _profile_fields():
-        number = int(field["field_number"])
-        result[f"{number:03d}"] = field
+        public_id = str(field.get("field_id") or f"{int(field['field_number']):03d}")
+        result[public_id] = field
     return result
 
 
@@ -365,16 +372,16 @@ def _show_field_registry(fields: list[dict[str, Any]]) -> None:
     print(f"{'ID':<6} {'MULTI':<7} {'FIELD KEY':<28} LABEL")
     print("-" * 76)
     for field in fields:
-        number = int(field["field_number"])
+        public_id = str(field.get("field_id") or f"{int(field['field_number']):03d}")
         multiple = "yes" if field.get("allows_multiple") else "no"
-        print(f"{number:03d}   {multiple:<7} {str(field['field_key']):<28} {field['label']}")
+        print(f"{public_id:<8} {multiple:<7} {str(field['field_key']):<28} {field['label']}")
 
 
 def _prompt_field_parts() -> list[FieldPart]:
     fields = _profile_fields()
     if not fields:
         raise RuleError("no active profile fields are registered")
-    field_map = {f"{int(item['field_number']):03d}": item for item in fields}
+    field_map = {str(item.get("field_id") or f"{int(item['field_number']):03d}"): item for item in fields}
     _show_field_registry(fields)
     print()
     while True:
@@ -390,11 +397,10 @@ def _prompt_field_parts() -> list[FieldPart]:
     parts: list[FieldPart] = []
     for index in range(1, total + 1):
         while True:
-            raw_id = input(f"Component {index} field ID (e.g. 1 or 001): ").strip()
-            if raw_id.isdigit():
-                field_id = f"{int(raw_id):03d}"
-                if field_id in field_map:
-                    break
+            raw_id = input(f"Component {index} field ID (e.g. 0200 or 1200E): ").strip()
+            field_id = normalize_field_id(raw_id)
+            if field_id and field_id in field_map:
+                break
             print("Unknown or archived field ID. Choose an ID from the list.")
         field = field_map[field_id]
         print(f"Selected: {field_id} | {field['label']} ({field['field_key']})")
@@ -426,6 +432,8 @@ def _parts_to_yaml(parts: tuple[FieldPart, ...] | list[FieldPart]) -> list[dict[
     result = []
     for part in parts:
         item: dict[str, Any] = {"field_id": part.field_id}
+        if part.format is not None:
+            item["format"] = part.format
         slice_data: dict[str, Any] = {"mode": part.mode}
         if part.count is not None:
             slice_data["count"] = part.count
@@ -503,7 +511,8 @@ def _prompt_existing_parts(rule: Rule) -> list[FieldPart]:
     print("Current field components:")
     for i, part in enumerate(rule.fields, 1):
         suffix = "" if part.count is None else f" {part.count}"
-        print(f"  {i}. field {part.field_id}: {part.mode}{suffix}")
+        date_suffix = f" format={part.format}" if part.format else ""
+        print(f"  {i}. field {part.field_id}: {part.mode}{suffix}{date_suffix}")
     print("To keep the existing field pattern, press Enter.")
     answer = input("Replace field components? [y/N]: ").strip().lower()
     return _prompt_field_parts() if answer in {"y", "yes"} else list(rule.fields)

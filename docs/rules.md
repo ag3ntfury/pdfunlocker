@@ -45,7 +45,7 @@ rule:
   priority: "Z"
 pattern:
   fields:
-    - field_id: "001"
+    - field_id: "0200"
       slice:
         mode: "full"
 transform:
@@ -64,3 +64,24 @@ the add workflow offers the default case-transform variants.
 - A rule file is created exclusively; an existing file is never overwritten.
 - Malformed rules fail validation rather than being silently accepted.
 - Rule-number and ID allocation considers archived rule files when readable.
+
+
+## Permanent profile field IDs
+
+Rule `field_id` values use the permanent profile registry. Standard fields use
+four-digit IDs (for example `0200` for `FIRST_NAME` and `0600` for `DOB`).
+Bank fields use a four-digit bank group plus a suffix: `1200A` through `1200F`
+for Bank 01, `1201A` through `1201F` for Bank 02, and so on.
+
+A date field can include a `format` to derive a password component from `DOB`:
+
+```yaml
+- field_id: "0600"
+  format: "YYYY"
+  slice:
+    mode: full
+```
+
+Supported date formats are `DDMM`, `DDMMYY`, `DDMMYYYY`, `MMDD`, `YYYY`,
+and `YYYYMMDD`. Legacy three-digit field IDs are accepted as compatibility
+aliases, but migrated rules use the permanent IDs.
