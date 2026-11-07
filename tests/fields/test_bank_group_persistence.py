@@ -1,16 +1,18 @@
 from pdfunlocker.profiles import store
 
 
-def test_bank_group_definitions_mark_name_single_and_details_repeatable(tmp_path, monkeypatch):
+def test_bank_group_definitions_share_type_ids_and_have_correct_multiplicity(tmp_path, monkeypatch):
     monkeypatch.setattr(store, "DB_PATH", tmp_path / "profiles.sqlite3")
     store.initialize()
-    created = store.ensure_bank_group(1200)
-    assert len(created) == 6
-    assert [item["field_id"] for item in created] == ["1200A", "1200B", "1200C", "1200D", "1200E", "1200F"]
-    assert [item["allows_multiple"] for item in created] == [False, True, True, True, True, True]
+    first = store.ensure_bank_group(1200)
+    second = store.ensure_bank_group(1201)
+    expected = ["4169", "4223", "4298", "4356", "4424", "4487"]
+    assert [item["field_id"] for item in first] == expected
+    assert [item["field_id"] for item in second] == expected
+    assert [item["allows_multiple"] for item in first] == [True, True, True, True, True, True]
 
 
-def test_multiple_bank_groups_allocate_sequentially_without_reusing_ids(tmp_path, monkeypatch):
+def test_multiple_bank_groups_allocate_sequentially_without_reusing_definitions(tmp_path, monkeypatch):
     monkeypatch.setattr(store, "DB_PATH", tmp_path / "profiles.sqlite3")
     store.initialize()
     assert store.next_bank_group() == 1201

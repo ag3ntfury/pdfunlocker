@@ -212,11 +212,11 @@ def test_title_gets_permanent_global_field_id(tmp_path, monkeypatch):
         assert title_id > 30
         assert fields["TITLE"]["is_builtin"] == 1
 
-        first_id, _ = store.add_field("Travel Tag", "TRAVEL_TAG", False)
+        first_id, _ = store.add_field("Travel Tag", "TRAVEL_TAG", False, "Personal")
         assert first_id > title_id
 
         store.archive_field("TRAVEL_TAG")
-        next_id, _ = store.add_field("Family Code", "FAMILY_CODE", False)
+        next_id, _ = store.add_field("Family Code", "FAMILY_CODE", False, "Personal")
         assert next_id > first_id
 
         fields = {
@@ -258,8 +258,10 @@ def test_custom_repeatable_suffix_is_not_reused_after_deletion(tmp_path, monkeyp
         "Travel Contact",
         "TRAVEL_CONTACT",
         allows_multiple=True,
+        category="Personal",
     )
-    assert field_id > 31
+    field_definition = next(item for item in store.list_fields() if item["field_key"] == field_key)
+    assert 1001 <= int(field_definition["field_id"]) <= 3000
 
     profile_path = tmp_path / "profile.env"
     original = {

@@ -7,14 +7,19 @@ Only the password-rule candidate resolver decrypts values when required.
 from __future__ import annotations
 
 import base64
+import errno
 import os
 import re
 import secrets
-import shutil
+import tempfile
+import time
+from contextlib import contextmanager
 from pathlib import Path
 
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
 from pdfunlocker.paths import APP_DIR
+
 
 KEY_PATH = APP_DIR / "config" / "card-number.key"
 TOKEN_PREFIX = "ENCv1:"
@@ -31,7 +36,11 @@ def is_card_field_key(field_key: str) -> bool:
     key = str(field_key).upper()
     match = _REPEATABLE_RE.fullmatch(key)
     base = match.group(1) if match else key
-    return base in {"CARD_NO", "CREDIT_CARD_NUMBER"} or bool(_BANK_CARD_RE.fullmatch(base))
+    return base in {
+        "CARD_NO",
+        "CARD_NUMBER",
+        "CREDIT_CARD_NUMBER",
+    } or bool(_BANK_CARD_RE.fullmatch(base))
 
 
 def is_encrypted_card(value: str) -> bool:
@@ -39,104 +48,232 @@ def is_encrypted_card(value: str) -> bool:
 
 
 def is_masked_card(value: str) -> bool:
-    return isinstance(value, str) and bool(re.fullmatch(r"X{8,15}[0-9]{4}", value))
+    return isinstance(value, str) and bool(
+        re.fullmatch(r"X{8,15}[0-9]{4}", value)
+    )
+
+
+@contextmanager
+def _key_file_lock():
+    """Serialize key creation and recovery across independent processes."""
+    lock_path = KEY_PATH.with_name(KEY_PATH.name + ".lock")
+    lock_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+
+    fd = os.open(
+        lock_path,
+        os.O_RDWR | os.O_CREAT,
+        0o600,
+    )
+
+    locked = False
+    windows_lock = False
+
+    try:
+        try:
+            os.chmod(lock_path, 0o600)
+        except OSError:
+            pass
+
+        if os.name == "nt":
+            import msvcrt
+
+            windows_lock = True
+
+            if os.fstat(fd).st_size == 0:
+                os.write(fd, b"\0")
+
+            while True:
+                try:
+                    os.lseek(fd, 0, os.SEEK_SET)
+                    msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+                    locked = True
+                    break
+                except OSError as exc:
+                    if exc.errno not in (
+                        errno.EACCES,
+                        errno.EDEADLK,
+                        errno.EAGAIN,
+                    ):
+                        raise
+                    time.sleep(0.05)
+        else:
+            import fcntl
+
+            fcntl.flock(fd, fcntl.LOCK_EX)
+            locked = True
+
+        yield
+
+    finally:
+        if locked:
+            if windows_lock:
+                import msvcrt
+
+                os.lseek(fd, 0, os.SEEK_SET)
+                msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+            else:
+                import fcntl
+
+                fcntl.flock(fd, fcntl.LOCK_UN)
+
+        os.close(fd)
 
 
 def _write_private_key(path: Path, data: bytes) -> None:
+    """Atomically write a private key using a unique temporary file."""
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+
     try:
         os.chmod(path.parent, 0o700)
     except OSError:
         pass
-    temp = path.with_name(path.name + ".tmp")
-    fd = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "wb") as handle:
-        handle.write(data)
-        handle.flush()
-        os.fsync(handle.fileno())
-    os.replace(temp, path)
+
+    fd, temp_name = tempfile.mkstemp(
+        prefix=f".{path.name}.",
+        suffix=".tmp",
+        dir=str(path.parent),
+    )
+    temp_path = Path(temp_name)
+
     try:
-        os.chmod(path, 0o600)
-    except OSError:
-        pass
+        try:
+            os.fchmod(fd, 0o600)
+        except (AttributeError, OSError):
+            pass
+
+        with os.fdopen(fd, "wb") as handle:
+            fd = -1
+            handle.write(data)
+            handle.flush()
+            os.fsync(handle.fileno())
+
+        os.replace(temp_path, path)
+
+        try:
+            os.chmod(path, 0o600)
+        except OSError:
+            pass
+
+    finally:
+        if fd >= 0:
+            os.close(fd)
+
+        try:
+            temp_path.unlink()
+        except FileNotFoundError:
+            pass
 
 
 def _load_or_create_key() -> bytes:
-    default_key_path = APP_DIR / "config" / "card-number.key"
-    use_recovery_copy = KEY_PATH == default_key_path
-    recovery_key = APP_DIR / "backups" / "keys" / "card-number.key"
+    """Load, restore, or create one consistent key under an inter-process lock."""
+    with _key_file_lock():
+        default_key_path = APP_DIR / "config" / "card-number.key"
+        use_recovery_copy = KEY_PATH == default_key_path
+        recovery_key = APP_DIR / "backups" / "keys" / "card-number.key"
 
-    if KEY_PATH.is_file():
-        data = KEY_PATH.read_bytes()
-    elif use_recovery_copy and recovery_key.is_file():
-        # Restore the live key from its private recovery copy if needed.
-        data = recovery_key.read_bytes()
-        _write_private_key(KEY_PATH, data)
-    else:
-        data = secrets.token_bytes(32)
-        _write_private_key(KEY_PATH, data)
+        if KEY_PATH.is_file():
+            data = KEY_PATH.read_bytes()
 
-    if len(data) != 32:
-        raise CardEncryptionError(
-            f"Card encryption key is invalid: {KEY_PATH}. Restore the matching key backup."
-        )
+        elif use_recovery_copy and recovery_key.is_file():
+            # Restore the live key from its private recovery copy.
+            data = recovery_key.read_bytes()
+            _write_private_key(KEY_PATH, data)
 
-    if use_recovery_copy:
-        if recovery_key.exists():
-            if recovery_key.read_bytes() != data:
-                raise CardEncryptionError(
-                    "The private card-key recovery copy does not match the active key. "
-                    "Stop before saving or decrypting card numbers."
-                )
         else:
-            _write_private_key(recovery_key, data)
+            data = secrets.token_bytes(32)
+            _write_private_key(KEY_PATH, data)
 
-    try:
-        os.chmod(KEY_PATH, 0o600)
-    except OSError:
-        pass
-    return data
+        if len(data) != 32:
+            raise CardEncryptionError(
+                f"Card encryption key is invalid: {KEY_PATH}. "
+                "Restore the matching key backup."
+            )
+
+        if use_recovery_copy:
+            if recovery_key.exists():
+                if recovery_key.read_bytes() != data:
+                    raise CardEncryptionError(
+                        "The private card-key recovery copy does not match "
+                        "the active key. Stop before saving or decrypting "
+                        "card numbers."
+                    )
+            else:
+                _write_private_key(recovery_key, data)
+
+        try:
+            os.chmod(KEY_PATH, 0o600)
+        except OSError:
+            pass
+
+        return data
 
 
 def encrypt_card_number(value: str) -> str:
     if is_encrypted_card(value):
         return value
+
     digits = re.sub(r"[ -]", "", str(value))
+
     if not re.fullmatch(r"[0-9]{12,19}", digits):
-        raise ValueError("A complete 12-19 digit card number is required for encryption.")
+        raise ValueError(
+            "A complete 12-19 digit card number is required for encryption."
+        )
+
     nonce = secrets.token_bytes(12)
-    ciphertext = AESGCM(_load_or_create_key()).encrypt(nonce, digits.encode("ascii"), _AAD)
-    payload = base64.urlsafe_b64encode(nonce + ciphertext).decode("ascii").rstrip("=")
+    ciphertext = AESGCM(_load_or_create_key()).encrypt(
+        nonce,
+        digits.encode("ascii"),
+        _AAD,
+    )
+    payload = base64.urlsafe_b64encode(
+        nonce + ciphertext
+    ).decode("ascii").rstrip("=")
+
     return f"{TOKEN_PREFIX}{digits[-4:]}:{payload}"
 
 
 def decrypt_card_number(value: str) -> str:
     if not is_encrypted_card(value):
         return value
+
     try:
         _prefix, last4, payload = value.split(":", 2)
         padded = payload + "=" * (-len(payload) % 4)
         raw = base64.urlsafe_b64decode(padded.encode("ascii"))
+
         if len(raw) < 12 + 16:
             raise ValueError("short ciphertext")
-        plaintext = AESGCM(_load_or_create_key()).decrypt(raw[:12], raw[12:], _AAD)
+
+        plaintext = AESGCM(_load_or_create_key()).decrypt(
+            raw[:12],
+            raw[12:],
+            _AAD,
+        )
         digits = plaintext.decode("ascii")
-        if not re.fullmatch(r"[0-9]{12,19}", digits) or digits[-4:] != last4:
+
+        if (
+            not re.fullmatch(r"[0-9]{12,19}", digits)
+            or digits[-4:] != last4
+        ):
             raise ValueError("invalid plaintext")
+
         return digits
+
     except Exception as exc:
         raise CardEncryptionError(
-            "Unable to decrypt the stored card number. Check the card encryption key backup."
+            "Unable to decrypt the stored card number. "
+            "Check the card encryption key backup."
         ) from exc
 
 
 def encrypt_profile_value(field_key: str, value: str) -> str:
     if not is_card_field_key(field_key) or not value or is_encrypted_card(value):
         return value
-    # Older releases stored only a masked card. Preserve that non-recoverable
-    # legacy token; new complete values are always encrypted.
+
+    # Preserve legacy masked values that cannot be recovered.
     if is_masked_card(value):
         return value
+
     return encrypt_card_number(value)
 
 
@@ -148,7 +285,10 @@ def mask_card_value(value: str) -> str:
                 return f"[encrypted card •••• {last4}]"
         except (IndexError, ValueError):
             pass
+
         return "[encrypted card number]"
+
     if re.fullmatch(r"[0-9]{12,19}", str(value)):
         return f"[card number •••• {str(value)[-4:]}]"
+
     return "[card number]"

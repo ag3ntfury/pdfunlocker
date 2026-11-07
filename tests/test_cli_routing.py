@@ -70,3 +70,27 @@ def test_uninstalled_direct_rule_help_uses_repository_rules(monkeypatch):
     main.main()
 
     assert calls == ["00007"]
+
+
+def test_uninstalled_profile_command_requires_setup(monkeypatch, capsys):
+    monkeypatch.setattr(installer, "find_installation_config", lambda: None)
+    monkeypatch.delenv("PDFUNLOCKER_PROFILE_DEV_MODE", raising=False)
+    monkeypatch.setattr("sys.argv", ["pdfunlocker", "profile", "list"])
+
+    main.main()
+
+    assert "not initialized" in capsys.readouterr().out.lower()
+
+
+def test_profile_command_allows_explicit_development_mode(monkeypatch):
+    from pdfunlocker.cli import profile_cli
+
+    calls = []
+    monkeypatch.setattr(installer, "find_installation_config", lambda: None)
+    monkeypatch.setenv("PDFUNLOCKER_PROFILE_DEV_MODE", "1")
+    monkeypatch.setattr(profile_cli, "main", lambda args: calls.append(args))
+    monkeypatch.setattr("sys.argv", ["pdfunlocker", "profile", "list"])
+
+    main.main()
+
+    assert calls == [["list"]]

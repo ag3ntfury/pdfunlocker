@@ -191,13 +191,25 @@ def _parse_rule(path: Path) -> Rule:
     elif fields_data is not None:
         if not isinstance(fields_data, list) or not fields_data:
             raise RuleError(f"{path.name}: 'pattern.fields' must be a non-empty list")
+        try:
+            from pdfunlocker.profiles.store import list_fields
+            registered_fields = list_fields(include_archived=True)
+        except (ImportError, OSError, ValueError) as exc:
+            raise RuleError(f"{path.name}: cannot load profile field registry: {exc}") from exc
+        known_ids = {
+            str(field.get("field_id") or "").strip().upper()
+            for field in registered_fields
+            if field.get("field_id")
+        }
         for index, item in enumerate(fields_data, start=1):
             if not isinstance(item, dict):
                 raise RuleError(f"{path.name}: field item {index} must be a mapping")
             raw_id = item.get("field_id")
-            field_id = normalize_field_id(raw_id)
+            field_id = normalize_field_id(raw_id, known_ids=known_ids)
             if field_id is None:
-                raise RuleError(f"{path.name}: field item {index} has invalid field_id")
+                raise RuleError(
+                    f"{path.name}: field item {index} has unknown, unassigned, or invalid field_id"
+                )
             field_format = item.get("format")
             if field_format is not None:
                 if not isinstance(field_format, str) or field_format.upper() not in {
@@ -360,28 +372,42 @@ def _profile_fields() -> list[dict[str, Any]]:
 
 
 def _field_index() -> dict[str, dict[str, Any]]:
+    from pdfunlocker.profiles.store import list_fields
     result: dict[str, dict[str, Any]] = {}
-    for field in _profile_fields():
+    for field in list_fields(include_archived=True):
         public_id = str(field.get("field_id") or f"{int(field['field_number']):03d}")
-        result[public_id] = field
+        # Several bank records intentionally share the same field-type ID.
+        result.setdefault(public_id, field)
     return result
+
+
+def _public_field_key(field: dict[str, Any]) -> str:
+    from pdfunlocker.profiles.registry import BANK_SUFFIXES
+    match = re.fullmatch(r"BANK_1[2-6][0-9]{2}([A-F])", str(field.get("field_key", "")))
+    return BANK_SUFFIXES[match.group(1)][0] if match else str(field["field_key"])
 
 
 def _show_field_registry(fields: list[dict[str, Any]]) -> None:
     print("Available profile fields (archived fields excluded):")
     print(f"{'ID':<6} {'MULTI':<7} {'FIELD KEY':<28} LABEL")
     print("-" * 76)
+    seen: set[str] = set()
     for field in fields:
         public_id = str(field.get("field_id") or f"{int(field['field_number']):03d}")
+        if public_id in seen:
+            continue
+        seen.add(public_id)
         multiple = "yes" if field.get("allows_multiple") else "no"
-        print(f"{public_id:<8} {multiple:<7} {str(field['field_key']):<28} {field['label']}")
+        print(f"{public_id:<8} {multiple:<7} {_public_field_key(field):<28} {field['label']}")
 
 
 def _prompt_field_parts() -> list[FieldPart]:
     fields = _profile_fields()
     if not fields:
         raise RuleError("no active profile fields are registered")
-    field_map = {str(item.get("field_id") or f"{int(item['field_number']):03d}"): item for item in fields}
+    field_map = {}
+    for item in fields:
+        field_map.setdefault(str(item.get("field_id") or f"{int(item['field_number']):03d}"), item)
     _show_field_registry(fields)
     print()
     while True:
@@ -397,13 +423,13 @@ def _prompt_field_parts() -> list[FieldPart]:
     parts: list[FieldPart] = []
     for index in range(1, total + 1):
         while True:
-            raw_id = input(f"Component {index} field ID (e.g. 0200 or 1200E): ").strip()
-            field_id = normalize_field_id(raw_id)
+            raw_id = input(f"Component {index} field ID (e.g. 1248 or 4424): ").strip()
+            field_id = normalize_field_id(raw_id, known_ids=set(field_map))
             if field_id and field_id in field_map:
                 break
             print("Unknown or archived field ID. Choose an ID from the list.")
         field = field_map[field_id]
-        print(f"Selected: {field_id} | {field['label']} ({field['field_key']})")
+        print(f"Selected: {field_id} | {field['label']} ({_public_field_key(field)})")
         while True:
             mode = input("Slice [f=first N, l=last N, a=all/full] (default a): ").strip().lower()
             if mode in {"", "a", "all", "full"}:

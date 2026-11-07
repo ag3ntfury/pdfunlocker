@@ -746,6 +746,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main() -> None:
+    import os
     import re
     import sys
 
@@ -753,6 +754,15 @@ def main() -> None:
 
     argv = sys.argv[1:]
     installed = installer.find_installation_config() is not None
+    if argv and argv[0] == "profile":
+        dev_mode = os.environ.get("PDFUNLOCKER_PROFILE_DEV_MODE", "").strip().lower()
+        if installed or dev_mode in {"1", "true", "yes"}:
+            from pdfunlocker.cli import profile_cli
+            profile_cli.main(argv[1:])
+        else:
+            print("PDF Unlocker is not initialized. Run 'pdfunlocker setup' first.")
+        return
+
 
     direct_rule_help = (
         len(argv) == 2

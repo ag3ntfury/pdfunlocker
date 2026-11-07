@@ -45,8 +45,10 @@ def test_profile_collection_calls_are_in_permanent_id_order(monkeypatch):
         ("fixed", {"PAN", "AADHAAR"}),
         ("bank", None),
         ("fixed", {"INCORPORATION_DATE"}),
-        ("repeatable", {"TAN", "GSTIN"}),
-        ("repeatable", {"EMPLOYEE_ID", "UAN", "PPO_NUMBER", "PRAN", "POLICY_NUMBER"}),
+        ("repeatable", {"TAN", "GSTIN", "BUSINESS_NAME", "BUSINESS_REGISTRATION_NUMBER"}),
+        ("repeatable", {"EMPLOYEE_ID", "UAN", "PPO_NUMBER", "PRAN"}),
+        ("repeatable", {"POLICY_NUMBER", "INSURER_NAME", "POLICY_TYPE"}),
+        ("repeatable", {"ROLL_NUMBER", "INSTITUTION_NAME", "QUALIFICATION", "COURSE", "ENROLLMENT_NUMBER", "REGISTRATION_NUMBER"}),
     ]
 
 

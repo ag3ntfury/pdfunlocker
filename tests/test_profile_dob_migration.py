@@ -100,7 +100,7 @@ def test_schema_v2_migration_preserves_values_and_builds_dob(tmp_path, monkeypat
             "INSERT INTO field_definitions"
             "(field_number,field_key,label,category,allows_multiple,archived,"
             "is_builtin,is_custom,created_at) "
-            "VALUES(33,'LEGACY_CUSTOM','Legacy Custom','Custom',0,0,0,1,?)",
+            "VALUES((SELECT COALESCE(MAX(field_number),0)+1 FROM field_definitions),'LEGACY_CUSTOM','Legacy Custom','Custom',0,0,0,1,?)",
             (now,),
         )
         db.execute(
@@ -170,7 +170,7 @@ def test_schema_v2_migration_preserves_values_and_builds_dob(tmp_path, monkeypat
     assert fields["BIRTH_YEAR"]["archived"] == 1
     assert fields["ACCOUNT_TITLE"]["archived"] == 1
     assert fields["TITLE"]["field_number"] == 31
-    assert fields["LEGACY_CUSTOM"]["field_number"] == 33
+    assert fields["LEGACY_CUSTOM"]["field_number"] == 44
 
 
 def test_personal_profile_fields_place_dob_after_names():

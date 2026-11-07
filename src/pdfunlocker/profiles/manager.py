@@ -17,7 +17,7 @@ PROFILE_FIELDS = (
     ("Personal", (
         "TITLE", "FIRST_NAME", "LAST_NAME", "MIDDLE_NAME", "MOTHER_NAME", "DOB",
     )),
-    ("Identity", ("PAN", "AADHAAR")),
+    ("Private", ("PAN", "AADHAAR")),
     ("Business", ("INCORPORATION_DATE",)),
 )
 
@@ -28,11 +28,21 @@ REPEATABLE_FIELDS = (
     ("Personal", "postal code", "PINCODE"),
     ("Business", "TAN", "TAN"),
     ("Business", "GSTIN", "GSTIN"),
+    ("Business", "business name", "BUSINESS_NAME"),
+    ("Business", "business registration number", "BUSINESS_REGISTRATION_NUMBER"),
     ("Employment", "employee ID", "EMPLOYEE_ID"),
     ("Employment", "UAN", "UAN"),
     ("Employment", "PPO number", "PPO_NUMBER"),
     ("Employment", "PRAN", "PRAN"),
-    ("Policy", "policy number", "POLICY_NUMBER"),
+    ("Insurance", "policy number", "POLICY_NUMBER"),
+    ("Insurance", "insurer name", "INSURER_NAME"),
+    ("Insurance", "policy type", "POLICY_TYPE"),
+    ("Education", "institution name", "INSTITUTION_NAME"),
+    ("Education", "qualification", "QUALIFICATION"),
+    ("Education", "course", "COURSE"),
+    ("Education", "roll number", "ROLL_NUMBER"),
+    ("Education", "enrollment number", "ENROLLMENT_NUMBER"),
+    ("Education", "registration number", "REGISTRATION_NUMBER"),
 )
 
 DISPLAY_LABELS = {
@@ -42,7 +52,12 @@ DISPLAY_LABELS = {
     "PAN": "PAN", "AADHAAR": "Aadhaar", "IFSC": "IFSC", "CIF": "CIF",
     "UAN": "UAN", "PRAN": "PRAN", "PPO_NUMBER": "PPO Number",
     "GSTIN": "GSTIN", "TAN": "TAN", "EMPLOYEE_ID": "Employee ID",
-    "POLICY_NUMBER": "Policy Number", "CARD_NO": "Card Number",
+    "POLICY_NUMBER": "Policy Number", "ROLL_NUMBER": "Roll Number", "CARD_NO": "Card Number",
+    "BUSINESS_NAME": "Business Name", "BUSINESS_REGISTRATION_NUMBER": "Business Registration Number",
+    "INSURER_NAME": "Insurer Name", "POLICY_TYPE": "Policy Type",
+    "INSTITUTION_NAME": "Institution Name", "QUALIFICATION": "Qualification",
+    "COURSE": "Course", "ENROLLMENT_NUMBER": "Enrollment Number",
+    "REGISTRATION_NUMBER": "Registration Number",
     "ACCOUNT_NUMBER": "Account Number", "CUSTOMER_ID": "Customer ID",
     "BANK_NAME": "Bank Name", "INCORPORATION_DATE": "Incorporation Date",
 }
@@ -50,6 +65,7 @@ DISPLAY_LABELS = {
 
 def display_label(field: str) -> str:
     key = str(field).upper().replace(" ", "_")
+    key = re.sub(r"_\d+$", "", key)
     bank_match = re.fullmatch(r"BANK_1[2-6][0-9]{2}([A-F])", key)
     if bank_match:
         suffix_labels = {
@@ -315,20 +331,12 @@ def collect_fixed_fields(
     from pdfunlocker.profiles import store
 
     values = existing if existing is not None else {}
-    definitions = {
-        item["field_key"]: int(item["field_number"])
-        for item in store.list_fields(include_archived=True)
-    }
-
     for section, fields in PROFILE_FIELDS:
         selected_fields = [field for field in fields if field_keys is None or field in field_keys]
         if not selected_fields:
             continue
         print(f"--- {section} ---")
         for field in selected_fields:
-            number = definitions.get(field)
-            definition = next((item for item in store.list_fields(include_archived=True) if item["field_key"] == field), None)
-            code = str(definition.get("field_id") or "---") if definition else "---"
             current = values.get(field, "")
             hint = " (Mr/Mrs/Ms/Miss/Dr/Other)" if field == "TITLE" else ""
             label = display_label(field)
@@ -336,7 +344,7 @@ def collect_fixed_fields(
             while True:
                 if modifying and current:
                     answer = input_func(
-                        f"{code} {label}{hint} [{_safe_current_value(field, current)}] (Enter=keep, -=clear): "
+                        f"{label}{hint} [{_safe_current_value(field, current)}] (Enter=keep, -=clear): "
                     )
                     if field != "DOB":
                         answer = answer.strip()
@@ -346,7 +354,7 @@ def collect_fixed_fields(
                         values.pop(field, None)
                         break
                 else:
-                    answer = input_func(f"{code} {label}{hint}: ")
+                    answer = input_func(f"{label}{hint}: ")
                     if field != "DOB":
                         answer = answer.strip()
                     if not answer:
@@ -397,10 +405,9 @@ def collect_repeatable_fields(
             print(f"Current {shown_label} values:")
             for field in existing_fields:
                 sequence = 1 if field == prefix else int(field.rsplit("_", 1)[1])
-                code = store.value_code(field_number, sequence, True)
                 while True:
                     answer = input_func(
-                        f"{code} {shown_label} [{_safe_current_value(field, values[field])}] (Enter=keep, -=clear): "
+                        f"{shown_label} [{_safe_current_value(field, values[field])}] (Enter=keep, -=clear): "
                     ).strip()
                     if not answer:
                         break
@@ -416,11 +423,10 @@ def collect_repeatable_fields(
         sequence = store.next_value_sequence(profile_id, prefix, values)
         while True:
             field = f"{prefix}_{sequence:02d}"
-            code = store.value_code(field_number, sequence, True)
             prompt = (
-                f"{code} Mobile number (default country +91): "
+                "Mobile number (default country +91): "
                 if prefix == "MOBILE"
-                else f"{code} {shown_label}: "
+                else f"{shown_label}: "
             )
             answer = input_func(prompt).strip()
             if not answer:
@@ -437,88 +443,146 @@ def collect_bank_fields(
     modifying: bool = False,
     input_func=input,
 ) -> None:
-    """Collect bank groups using permanent IDs 1200A-1200F onward."""
+    """Collect bank details in user-facing order without exposing numeric IDs."""
     from pdfunlocker.profiles import store
     from pdfunlocker.profiles.registry import BANK_FIRST, BANK_LAST, BANK_SUFFIXES, bank_field_key
 
     profile_id_text = values.get("PROFILE_ID", "0")
     profile_id = int(profile_id_text) if profile_id_text.isdigit() else 0
-    group = BANK_FIRST
+    existing_groups = sorted({
+        int(match.group(1))
+        for key in values
+        if (match := re.fullmatch(r"BANK_(1[2-6][0-9]{2})A(?:_\d+)?", key))
+    })
     print("--- Banking details (optional) ---")
-    while group <= BANK_LAST:
-        definitions = store.ensure_bank_group(group)
-        name_key = bank_field_key(group, "A")
-        current_name = values.get(name_key, "")
-        bank_number = group - BANK_FIRST + 1
-        prompt = f"{group}A Bank {bank_number:02d} name"
+
+    def collect_single(group: int, suffix: str, label: str) -> None:
+        prefix = bank_field_key(group, suffix)
+        old_keys = sorted(
+            (key for key in values if key == prefix or re.fullmatch(re.escape(prefix) + r"_\d+", key)),
+            key=lambda key: int(key.rsplit("_", 1)[1]) if "_" in key else 0,
+        )
+        old_key = old_keys[0] if old_keys else ""
+        current = values.get(old_key, "") if old_key else ""
+        if modifying and current:
+            answer = input_func(
+                f"{label} [{_safe_current_value(old_key, current)}] (Enter=keep, -=clear): "
+            ).strip()
+            if not answer:
+                return
+            if answer == "-":
+                for key in old_keys:
+                    values.pop(key, None)
+                return
+            target_key = old_key
+        else:
+            answer = input_func(f"{label}: ").strip()
+            if not answer:
+                return
+            sequence = store.next_value_sequence(profile_id, prefix, values)
+            target_key = f"{prefix}_{sequence:02d}"
+        normalized = _validate_with_correction(target_key or prefix, answer, input_func)
+        if normalized is not None:
+            values[target_key] = normalized
+
+    def collect_multiple(group: int, suffix: str, label: str) -> None:
+        prefix = bank_field_key(group, suffix)
+        existing = ([prefix] if prefix in values else [])
+        existing.extend(sorted(
+            (key for key in values if key.startswith(prefix + "_") and key[len(prefix) + 1:].isdigit()),
+            key=lambda key: int(key.rsplit("_", 1)[1]),
+        ))
+        if modifying and existing:
+            print(f"Current {label} values:")
+            for old_key in existing:
+                current = values[old_key]
+                answer = input_func(
+                    f"{label} [{_safe_current_value(old_key, current)}] (Enter=keep, -=clear): "
+                ).strip()
+                if answer == "-":
+                    values.pop(old_key, None)
+                elif answer:
+                    normalized = _validate_with_correction(old_key, answer, input_func)
+                    if normalized is not None:
+                        values[old_key] = normalized
+            print(f"Add additional {label.lower()} values; press Enter to finish.")
+
+        sequence = store.next_value_sequence(profile_id, prefix, values)
+        while True:
+            answer = input_func(f"{label}: ").strip()
+            if not answer:
+                break
+            field_key = f"{prefix}_{sequence:02d}"
+            normalized = _validate_with_correction(field_key, answer, input_func)
+            if normalized is None:
+                break
+            values[field_key] = normalized
+            sequence += 1
+
+    def collect_group(group: int) -> None:
+        store.ensure_bank_group(group)
+        name_prefix = bank_field_key(group, "A")
+        name_keys = sorted(
+            (key for key in values if key == name_prefix or re.fullmatch(re.escape(name_prefix) + r"_\d+", key)),
+            key=lambda key: int(key.rsplit("_", 1)[1]) if "_" in key else 0,
+        )
+        current_key = name_keys[0] if name_keys else ""
+        current_name = values.get(current_key, "") if current_key else ""
         if modifying and current_name:
-            answer = input_func(f"{prompt} [{current_name}] (Enter=keep, -=clear): ").strip()
+            answer = input_func(
+                f"Bank Name [{current_name}] (Enter=keep, -=clear): "
+            ).strip()
             if answer == "-":
                 for suffix in "ABCDEF":
                     prefix = bank_field_key(group, suffix)
-                    values.pop(prefix, None)
                     for key in list(values):
-                        if key.startswith(prefix + "_"):
+                        if key == prefix or key.startswith(prefix + "_"):
                             values.pop(key, None)
-                group += 1
-                continue
-            answer = answer or current_name
+                return
+            bank_name = answer or current_name
+            target_name_key = current_key
         else:
-            answer = input_func(f"{prompt} (Enter=finish banks): ").strip()
-        if not answer:
-            break
-        normalized = _validate_with_correction(name_key, answer, input_func)
-        if normalized is None:
-            break
-        values[name_key] = normalized
+            bank_name = input_func("Bank Name: ").strip()
+            if not bank_name:
+                return
+            sequence = store.next_value_sequence(profile_id, name_prefix, values)
+            target_name_key = f"{name_prefix}_{sequence:02d}"
+        normalized_name = _validate_with_correction(target_name_key or name_prefix, bank_name, input_func)
+        if normalized_name is None:
+            return
+        values[target_name_key] = normalized_name
 
-        for suffix in "BCDEF":
-            prefix = bank_field_key(group, suffix)
-            _base, label, _multiple = BANK_SUFFIXES[suffix]
-            existing = [prefix] if prefix in values else []
-            existing.extend(sorted(
-                (key for key in values if key.startswith(prefix + "_") and key[len(prefix)+1:].isdigit()),
-                key=lambda key: int(key.rsplit("_", 1)[1]),
-            ))
-            if modifying:
-                for old_key in existing:
-                    current = values[old_key]
-                    while True:
-                        old_sequence = int(old_key.rsplit("_", 1)[1]) if "_" in old_key else 1
-                        old_code = f"{definitions[ord(suffix)-ord('A')]['field_id']}-{old_sequence:02d}"
-                        shown_old_label = (
-                            "Card Number (full 12-19 digits; encrypted)"
-                            if suffix == "F" else display_label(_base)
-                        )
-                        answer = input_func(f"{old_code} {shown_old_label} [{_safe_current_value(prefix, current)}] (Enter=keep, -=clear): ").strip()
-                        if not answer:
-                            break
-                        if answer == "-":
-                            values.pop(old_key, None)
-                            break
-                        normalized = _validate_with_correction(old_key, answer, input_func)
-                        if normalized is not None:
-                            values[old_key] = normalized
-                        break
-            sequence = store.next_value_sequence(profile_id, prefix, values)
-            while True:
-                field_key = f"{prefix}_{sequence:02d}"
-                code = f"{definitions[ord(suffix)-ord('A')]['field_id']}-{sequence:02d}"
-                shown_label = (
-                    "Card Number (full 12-19 digits; encrypted)"
-                    if suffix == "F" else display_label(_base)
-                )
-                answer = input_func(f"{code} {shown_label} (Enter=skip): ").strip()
-                if not answer:
-                    break
-                normalized = _validate_with_correction(field_key, answer, input_func)
-                if normalized is None:
-                    break
-                values[field_key] = normalized
-                sequence += 1
-        group += 1
+        # Exact requested order: IFSC, CIF, Customer ID, account number(s), card number(s).
+        collect_single(group, "B", "IFSC")
+        collect_single(group, "C", "CIF")
+        collect_single(group, "D", "Customer ID")
+        collect_multiple(group, "E", "Account Number")
+        collect_multiple(group, "F", "Card Number (full 12-19 digits; encrypted)")
+
+    # Existing banks are edited in their saved order first.
+    for group in existing_groups if modifying else []:
+        collect_group(group)
+
+    # Adding banks is explicit: Y continues; Enter (or any other answer) stops.
+    while True:
+        next_group = max(existing_groups) + 1 if existing_groups else BANK_FIRST
+        if next_group > BANK_LAST:
+            break
+        if not existing_groups and not values.get(bank_field_key(next_group, "A")):
+            # First bank is collected without an extra confirmation.
+            collect_group(next_group)
+        else:
+            answer = input_func("Add another bank? Y for yes; Enter to skip: ").strip().lower()
+            if answer not in {"y", "yes"}:
+                break
+            collect_group(next_group)
+        # If the bank name was skipped, do not keep prompting for further banks.
+        name_prefix = bank_field_key(next_group, "A")
+        if not any(key == name_prefix or key.startswith(name_prefix + "_") for key in values):
+            break
+        existing_groups.append(next_group)
+        modifying = False
     print()
-
 
 def collect_custom_fields(
     values: dict[str, str],
@@ -564,7 +628,6 @@ def collect_custom_fields(
                 current = values[old_key]
                 while True:
                     answer = input_func(
-                        f"{store.value_code(number, int(old_key.rsplit('_', 1)[1]), True)} "
                         f"{label} [{current}] (Enter=keep, -=clear): "
                     ).strip()
                     if not answer:
@@ -579,9 +642,7 @@ def collect_custom_fields(
 
             sequence = store.next_value_sequence(profile_id, key, values)
             while True:
-                answer = input_func(
-                    f"{store.value_code(number, sequence, True)} {label}: "
-                ).strip()
+                answer = input_func(f"{label}: ").strip()
                 if not answer:
                     break
                 field = f"{key}_{sequence:02d}"
@@ -594,10 +655,9 @@ def collect_custom_fields(
             current = values.get(key, "")
             while True:
                 prompt = (
-                    f"{store.value_code(number)} {label} "
-                    f"[{current}] (Enter=keep, -=clear): "
+                    f"{label} [{current}] (Enter=keep, -=clear): "
                     if modifying and current
-                    else f"{store.value_code(number)} {label}: "
+                    else f"{label}: "
                 )
                 answer = input_func(prompt).strip()
                 if modifying and current and answer == "-":
@@ -630,8 +690,10 @@ def collect_profile_values(
     collect_fixed_fields(values, modifying, input_func, {"PAN", "AADHAAR"})
     collect_bank_fields(values, modifying, input_func)
     collect_fixed_fields(values, modifying, input_func, {"INCORPORATION_DATE"})
-    collect_repeatable_fields(values, modifying, input_func, {"TAN", "GSTIN"})
-    collect_repeatable_fields(values, modifying, input_func, {"EMPLOYEE_ID", "UAN", "PPO_NUMBER", "PRAN", "POLICY_NUMBER"})
+    collect_repeatable_fields(values, modifying, input_func, {"TAN", "GSTIN", "BUSINESS_NAME", "BUSINESS_REGISTRATION_NUMBER"})
+    collect_repeatable_fields(values, modifying, input_func, {"EMPLOYEE_ID", "UAN", "PPO_NUMBER", "PRAN"})
+    collect_repeatable_fields(values, modifying, input_func, {"POLICY_NUMBER", "INSURER_NAME", "POLICY_TYPE"})
+    collect_repeatable_fields(values, modifying, input_func, {"ROLL_NUMBER", "INSTITUTION_NAME", "QUALIFICATION", "COURSE", "ENROLLMENT_NUMBER", "REGISTRATION_NUMBER"})
     if include_custom_fields:
         collect_custom_fields(values, modifying, input_func)
 
@@ -757,10 +819,6 @@ def show_profile(profile_id: int) -> None:
         key = str(item["field_key"])
         field_id = str(item.get("field_id") or item["field_number"])
         category = str(item.get("category") or "Other")
-        if category != current_category:
-            print(f"--- {category} ---")
-            current_category = category
-
         entries: list[tuple[int, str]] = []
         if key in values:
             entries.append((0, values[key]))
@@ -773,10 +831,13 @@ def show_profile(profile_id: int) -> None:
 
         if not entries:
             continue
+        if category != current_category:
+            print(f"--- {category} ---")
+            current_category = category
         label = display_label(key)
         for sequence, value in entries:
             code = (
-                store.value_code(int(item["field_number"]), sequence or 1, True)
+                store.value_code(int(item["field_number"]), sequence, True)
                 if item.get("allows_multiple")
                 else field_id
             )
@@ -917,59 +978,81 @@ def remove_profile(profile_id: int) -> None:
     print()
 
 
+def _public_registry_field_key(item: dict) -> str:
+    from pdfunlocker.profiles.registry import BANK_SUFFIXES
+    match = re.fullmatch(r"BANK_1[2-6][0-9]{2}([A-F])", str(item.get("field_key", "")))
+    return BANK_SUFFIXES[match.group(1)][0] if match else str(item.get("field_key", ""))
+
+
 def list_profile_fields() -> None:
-    """List supported field names without exposing stored profile values."""
+    """List the seven profile groups and their readable field names."""
     print("Supported profile fields")
     print("=========================")
+    groups: dict[str, list[str]] = {
+        "Personal": [], "Private": [], "Banking": [], "Business": [],
+        "Employment": [], "Insurance": [], "Education": [],
+    }
     for section, fields in PROFILE_FIELDS:
-        print(f"\n{section}:")
-        for field in fields:
+        groups.setdefault(section, []).extend(fields)
+    for section, _label, prefix in REPEATABLE_FIELDS:
+        groups.setdefault(section, []).append(prefix)
+    groups["Banking"].extend(("BANK_NAME", "IFSC", "CIF", "CUSTOMER_ID", "ACCOUNT_NUMBER", "CARD_NUMBER", "BRANCH", "ACCOUNT_TYPE"))
+    for category in ("Personal", "Private", "Banking", "Business", "Employment", "Insurance", "Education"):
+        print(f"\n{category}:")
+        for field in dict.fromkeys(groups[category]):
             print(f"  {field}")
 
-    print("\nRepeatable fields (numbered suffixes such as _01):")
-    for section, label, prefix in REPEATABLE_FIELDS:
-        print(f"  {section}: {prefix}_NN — {label}")
     from pdfunlocker.profiles import store
-    print("\nSQLite field registry (IDs are assigned automatically):")
+    print("\nSQLite field registry (permanent field IDs):")
+    seen_ids: set[str] = set()
     for item in store.list_fields():
+        field_id = str(item.get("field_id") or item["field_number"])
+        if field_id in seen_ids:
+            continue
+        seen_ids.add(field_id)
         suffix = "A/B/C... per value" if item["allows_multiple"] else "single value"
         state = "archived" if item["archived"] else "active"
-        print(f"  {item['field_number']:03d} {item['field_key']:<24} {suffix} [{state}]")
+        print(f"  {field_id:<8} {_public_registry_field_key(item):<30} {suffix} [{state}]")
     print("\nAll profile fields are optional unless a particular rule needs them.")
 
 
-def add_profile_field() -> None:
+def add_profile_field(*, raise_errors: bool = False) -> None:
     from pdfunlocker.profiles import store
     label = input("Field label: ").strip()
     if not label:
+        if raise_errors:
+            raise ValueError("Field label is required.")
         print("Field label is required.")
         return
     default_key = re.sub(r"[^A-Z0-9]+", "_", label.upper()).strip("_")
     key = input(f"Field key [{default_key}]: ").strip() or default_key
-    print("Categories: Personal, Identity, Financial, Benefits & Retirement, Tax & Business, Custom")
-    category = input("Category [Custom]: ").strip() or "Custom"
-    valid_categories = {"Personal", "Identity", "Financial", "Benefits & Retirement", "Tax & Business", "Custom"}
-    if category not in valid_categories:
-        print("Unknown category. Use one of the listed categories.")
+    print("Categories: Personal, Private, Banking, Business, Employment, Insurance, Education")
+    category = input("Category (required): ").strip()
+    if not category:
+        if raise_errors:
+            raise ValueError("A category is required. No field was created.")
+        print("A category is required. No field was created.")
         return
     multiple_answer = input("Allow multiple values? [y/N]: ").strip().lower()
     try:
         number, key = store.add_field(label, key, multiple_answer in {"y", "yes"}, category)
     except (ValueError, OSError) as exc:
+        if raise_errors:
+            raise
         print(f"Cannot add field: {exc}")
         return
     suffix = "A, B, C..." if multiple_answer in {"y", "yes"} else "single value"
-    print(f"Field added: {number:03d} {key} ({suffix})")
+    created = next((item for item in store.list_fields(include_archived=True) if item["field_key"] == key), None)
+    public_id = str(created.get("field_id")) if created else str(number)
+    print(f"Field added: {public_id} {key} ({suffix})")
     print("This field is now available to all profiles.")
 
 
 def archive_profile_field(field_key: str) -> None:
+    """Archive a custom field, propagating failures to the calling CLI."""
     from pdfunlocker.profiles import store
-    try:
-        store.archive_field(field_key)
-    except (ValueError, OSError) as exc:
-        print(f"Cannot archive field: {exc}")
-        return
+
+    store.archive_field(field_key)
     print(f"Field archived: {field_key.upper()}. Existing values are retained.")
 
 
@@ -978,21 +1061,41 @@ def list_profile_registry() -> None:
     print("Profile field registry")
     print("======================")
     fields = store.list_fields()
-    order = ("Personal", "Identity", "Financial", "Benefits & Retirement", "Tax & Business", "Custom", "Business")
+    order = ("Personal", "Private", "Banking", "Business", "Employment", "Insurance", "Education")
     for category in order:
         grouped = [item for item in fields if item.get("category", "Custom") == category]
         if not grouped:
             continue
         print(f"\n--- {category} ---")
+        seen: set[str] = set()
         for item in grouped:
+            field_id = str(item.get("field_id") or item["field_number"])
+            if field_id in seen:
+                continue
+            seen.add(field_id)
             mode = "multiple (A/B/C...)" if item["allows_multiple"] else "single"
-            print(f"{item['field_number']:03d}  {item['field_key']:<24} {item['label']} [{mode}]")
+            print(f"{field_id:<8} {_public_registry_field_key(item):<30} {item['label']} [{mode}]")
+    legacy = [item for item in fields if item.get("category", "Custom") == "Custom"]
+    if legacy:
+        print("\n--- Legacy uncategorized (compatibility only) ---")
+        seen: set[str] = set()
+        for item in legacy:
+            field_id = str(item.get("field_id") or item["field_number"])
+            if field_id in seen:
+                continue
+            seen.add(field_id)
+            print(f"{field_id:<8} {_public_registry_field_key(item):<30} {item['label']} [legacy; category required]")
     archived = store.list_fields(include_archived=True)
     archived = [item for item in archived if item["archived"]]
     if archived:
         print("\n--- Archived (IDs retained) ---")
+        seen: set[str] = set()
         for item in archived:
-            print(f"{item['field_number']:03d}  {item['field_key']:<24} {item['label']} [archived]")
+            field_id = str(item.get("field_id") or item["field_number"])
+            if field_id in seen:
+                continue
+            seen.add(field_id)
+            print(f"{field_id:<8} {_public_registry_field_key(item):<30} {item['label']} [archived]")
 
 
 def check_profile(profile_id: int) -> bool:

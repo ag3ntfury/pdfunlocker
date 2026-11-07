@@ -81,7 +81,6 @@ def test_no_arguments_shows_menu_when_installed(monkeypatch, capsys):
         ["rules", "add"],
         ["rules", "modify", "00001"],
         ["rules", "remove", "00001"],
-        ["profile", "add"],
         ["profile", "delete"],
         ["install"],
     ],
@@ -100,6 +99,25 @@ def test_installed_personal_cli_rejects_legacy_mutations(
             cli.main()
 
     assert exc.value.code == 2
+
+
+def test_profile_add_routes_to_multi_profile_cli(monkeypatch):
+    from pdfunlocker.cli import profile_cli
+
+    calls = []
+    monkeypatch.setattr(
+        installer, "find_installation_config",
+        lambda: Path("/temporary/config.json"),
+    )
+    monkeypatch.setattr(
+        profile_cli, "main",
+        lambda arguments: calls.append(list(arguments)),
+    )
+
+    with patch("sys.argv", ["pdfunlocker", "profile", "add"]):
+        cli.main()
+
+    assert calls == [["add"]]
 
 
 def test_setup_command_runs_setup_wizard(monkeypatch):
