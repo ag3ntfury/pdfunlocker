@@ -1,0 +1,36 @@
+# PDF Unlocker - Default Rule Template
+#
+# Instructions:
+# - Assign the next available five-digit rule ID.
+# - Use Profile Template field IDs only.
+# - Add one or more entries under pattern.fields.
+# - Supported slice modes: first, last, full.
+# - Use count only with first or last.
+# - DOB is stored as DDMMYYYY in the profile.
+# - Keep all three transformations: lower, upper, raw.
+# - Set status to active or inactive.
+
+rule:
+  id: "00000"
+  name: "REPLACE_WITH_RULE_NAME"
+  category: utilities
+
+pattern:
+  fields:
+    - field_id: "1002"
+      slice:
+        mode: first
+        count: 4
+
+    - field_id: "1008"
+      slice:
+        mode: last
+        count: 4
+
+transform:
+  cases:
+    - lower
+    - upper
+    - raw
+
+status: inactive
