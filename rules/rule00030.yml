@@ -1,0 +1,17 @@
+# Audit note: Insufficient issuer evidence; conflicting secondary reports.
+# Field IDs refer to the approved default_profile_template.yml.
+rule:
+  id: '00030'
+  name: IDFC FIRST Bank Statement PAN
+  category: banking
+pattern:
+  fields:
+  - field_id: '1006'
+    slice:
+      mode: full
+transform:
+  cases:
+  - lower
+  - upper
+  - raw
+status: inactive

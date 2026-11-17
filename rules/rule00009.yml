@@ -1,0 +1,18 @@
+# Audit note: Issuer PDF password policy previously researched: last four chassis-number characters.
+# Field IDs refer to the approved default_profile_template.yml.
+rule:
+  id: 00009
+  name: ICICI Lombard Motor Chassis Last 4
+  category: insurance
+pattern:
+  fields:
+  - field_id: '1036'
+    slice:
+      mode: last
+      count: 4
+transform:
+  cases:
+  - lower
+  - upper
+  - raw
+status: active

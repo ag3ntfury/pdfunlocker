@@ -1,0 +1,22 @@
+# Audit note: Issuer PDF password policy previously researched: first four primary policyholder-name characters + DDMM. first_name is a proxy for registered name.
+# Field IDs refer to the approved default_profile_template.yml.
+rule:
+  id: '00007'
+  name: ICICI Lombard Health Name + DOB
+  category: insurance
+pattern:
+  fields:
+  - field_id: '1002'
+    slice:
+      mode: first
+      count: 4
+  - field_id: '1005'
+    slice:
+      mode: first
+      count: 4
+transform:
+  cases:
+  - lower
+  - upper
+  - raw
+status: active

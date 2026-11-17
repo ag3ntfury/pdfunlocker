@@ -1,0 +1,17 @@
+# Audit note: Secondary reports only; not confirmed by issuer documentation.
+# Field IDs refer to the approved default_profile_template.yml.
+rule:
+  id: '00022'
+  name: Canara Bank Statement Customer ID
+  category: banking
+pattern:
+  fields:
+  - field_id: '1021'
+    slice:
+      mode: full
+transform:
+  cases:
+  - lower
+  - upper
+  - raw
+status: inactive

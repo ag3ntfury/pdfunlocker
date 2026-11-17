@@ -1,0 +1,18 @@
+# Audit note: Issuer PDF password policy previously researched: last four registration-number characters.
+# Field IDs refer to the approved default_profile_template.yml.
+rule:
+  id: 00008
+  name: ICICI Lombard Motor Registration Last 4
+  category: insurance
+pattern:
+  fields:
+  - field_id: '1035'
+    slice:
+      mode: last
+      count: 4
+transform:
+  cases:
+  - lower
+  - upper
+  - raw
+status: active

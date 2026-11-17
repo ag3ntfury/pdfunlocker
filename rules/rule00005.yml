@@ -1,0 +1,17 @@
+# Audit note: Official format previously researched: buyer DOB DDMMYYYY. Profile DOB must belong to the buyer.
+# Field IDs refer to the approved default_profile_template.yml.
+rule:
+  id: '00005'
+  name: TRACES Form 16B Buyer DOB
+  category: government
+pattern:
+  fields:
+  - field_id: '1005'
+    slice:
+      mode: full
+transform:
+  cases:
+  - lower
+  - upper
+  - raw
+status: active

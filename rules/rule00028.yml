@@ -1,0 +1,22 @@
+# Audit note: Previously cited guide needs direct source verification before activation.
+# Field IDs refer to the approved default_profile_template.yml.
+rule:
+  id: 00028
+  name: IDBI Bank Credit Card Statement Name + DOB
+  category: banking
+pattern:
+  fields:
+  - field_id: '1002'
+    slice:
+      mode: first
+      count: 4
+  - field_id: '1005'
+    slice:
+      mode: first
+      count: 4
+transform:
+  cases:
+  - lower
+  - upper
+  - raw
+status: inactive

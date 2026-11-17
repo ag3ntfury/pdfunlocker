@@ -1,0 +1,21 @@
+# Audit note: Official Axis e-statement alternative cited in the audit: first four name letters + Customer ID. first_name is a proxy for registered name.
+# Field IDs refer to the approved default_profile_template.yml.
+rule:
+  id: '00013'
+  name: Axis Bank Account Statement Name + Customer ID
+  category: banking
+pattern:
+  fields:
+  - field_id: '1002'
+    slice:
+      mode: first
+      count: 4
+  - field_id: '1021'
+    slice:
+      mode: full
+transform:
+  cases:
+  - lower
+  - upper
+  - raw
+status: active

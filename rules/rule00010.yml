@@ -1,0 +1,22 @@
+# Audit note: Issuer format previously researched: first four registered-name letters + last four mobile digits. first_name is a proxy for registered name.
+# Field IDs refer to the approved default_profile_template.yml.
+rule:
+  id: '00010'
+  name: Jio Postpaid Name + Mobile Last 4
+  category: utilities
+pattern:
+  fields:
+  - field_id: '1002'
+    slice:
+      mode: first
+      count: 4
+  - field_id: '1008'
+    slice:
+      mode: last
+      count: 4
+transform:
+  cases:
+  - lower
+  - upper
+  - raw
+status: active

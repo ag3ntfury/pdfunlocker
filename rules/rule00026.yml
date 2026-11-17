@@ -1,0 +1,18 @@
+# Audit note: Corrected to the eight-digit Customer ID format described in official IndusInd statement examples.
+# Field IDs refer to the approved default_profile_template.yml.
+rule:
+  id: '00026'
+  name: IndusInd Bank Statement Customer ID First 8
+  category: banking
+pattern:
+  fields:
+  - field_id: '1021'
+    slice:
+      mode: first
+      count: 8
+transform:
+  cases:
+  - lower
+  - upper
+  - raw
+status: active

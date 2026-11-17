@@ -1,0 +1,22 @@
+# Audit note: Issuer format previously researched: first four name letters + birth year. Uses first_name as a proxy; registered-name matching may differ.
+# Field IDs refer to the approved default_profile_template.yml.
+rule:
+  id: '00001'
+  name: e-Aadhaar Name + Birth Year
+  category: government
+pattern:
+  fields:
+  - field_id: '1002'
+    slice:
+      mode: first
+      count: 4
+  - field_id: '1005'
+    slice:
+      mode: last
+      count: 4
+transform:
+  cases:
+  - lower
+  - upper
+  - raw
+status: active

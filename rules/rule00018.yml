@@ -1,0 +1,17 @@
+# Audit note: Secondary reports only; reported formats conflict.
+# Field IDs refer to the approved default_profile_template.yml.
+rule:
+  id: 00018
+  name: PNB Statement Customer ID
+  category: banking
+pattern:
+  fields:
+  - field_id: '1021'
+    slice:
+      mode: full
+transform:
+  cases:
+  - lower
+  - upper
+  - raw
+status: inactive

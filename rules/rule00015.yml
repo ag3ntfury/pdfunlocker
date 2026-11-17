@@ -1,0 +1,17 @@
+# Audit note: Insufficient issuer evidence for account-number password format.
+# Field IDs refer to the approved default_profile_template.yml.
+rule:
+  id: '00015'
+  name: SBI Downloaded Account Statement Account Number
+  category: banking
+pattern:
+  fields:
+  - field_id: '1020'
+    slice:
+      mode: full
+transform:
+  cases:
+  - lower
+  - upper
+  - raw
+status: inactive

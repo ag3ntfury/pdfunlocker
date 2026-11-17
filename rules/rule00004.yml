@@ -1,0 +1,17 @@
+# Audit note: Issuer format previously researched: first/sole holder PAN in uppercase.
+# Field IDs refer to the approved default_profile_template.yml.
+rule:
+  id: '00004'
+  name: CDSL e-CAS PAN
+  category: investment
+pattern:
+  fields:
+  - field_id: '1006'
+    slice:
+      mode: full
+transform:
+  cases:
+  - lower
+  - upper
+  - raw
+status: active

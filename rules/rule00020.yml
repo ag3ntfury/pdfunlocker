@@ -1,0 +1,17 @@
+# Audit note: Insufficient issuer evidence for CRN password format.
+# Field IDs refer to the approved default_profile_template.yml.
+rule:
+  id: '00020'
+  name: Kotak Mahindra Statement CRN
+  category: banking
+pattern:
+  fields:
+  - field_id: '1023'
+    slice:
+      mode: full
+transform:
+  cases:
+  - lower
+  - upper
+  - raw
+status: inactive

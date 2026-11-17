@@ -1,0 +1,17 @@
+# Audit note: Official HDFC account-statement FAQ was cited in the audit as confirming Customer ID. Applies to the documented downloaded statement flow.
+# Field IDs refer to the approved default_profile_template.yml.
+rule:
+  id: '00011'
+  name: HDFC Bank Account Statement Customer ID
+  category: banking
+pattern:
+  fields:
+  - field_id: '1021'
+    slice:
+      mode: full
+transform:
+  cases:
+  - lower
+  - upper
+  - raw
+status: active
