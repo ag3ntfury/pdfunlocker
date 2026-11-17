@@ -1,0 +1,252 @@
+# PDF Unlocker — Default Profile Template
+# Field registry only. Personal values are stored separately in user profiles.
+# IDs are permanent and globally unique. Do not reuse retired IDs.
+# S = single value; M = multiple values.
+# Single-value key: "1001"
+# Multiple-value keys: "1008A", "1008B", ...
+# Rules reference the parent field ID only (for example, "1008").
+
+template:
+  name: default_profile
+  version: 1
+  country_scope: IN
+
+field_registry:
+
+  personal:
+    - id: "1001"
+      name: title
+      type: string
+      multiplicity: S
+
+    - id: "1002"
+      name: first_name
+      type: string
+      multiplicity: S
+
+    - id: "1003"
+      name: middle_name
+      type: string
+      multiplicity: S
+
+    - id: "1004"
+      name: last_name
+      type: string
+      multiplicity: S
+
+    - id: "1005"
+      name: birth_date
+      type: date
+      multiplicity: S
+      format: YYYY-MM-DD
+
+    - id: "1010"
+      name: full_name
+      type: string
+      multiplicity: S
+
+    - id: "1011"
+      name: document_name
+      type: string
+      multiplicity: M
+      description: Name exactly as printed on a document or held by an issuer.
+
+    - id: "1012"
+      name: aadhaar_name
+      type: string
+      multiplicity: S
+
+    - id: "1013"
+      name: incorporation_date
+      type: date
+      multiplicity: M
+      format: YYYY-MM-DD
+      description: Date of incorporation or formation for non-individual entities.
+
+  identity:
+    - id: "1006"
+      name: pan
+      type: string
+      multiplicity: S
+      normalization: uppercase
+
+    - id: "1007"
+      name: pincode
+      type: string
+      multiplicity: S
+      validation: "6 digits"
+
+    - id: "1014"
+      name: tan
+      type: string
+      multiplicity: M
+      normalization: uppercase
+
+    - id: "1015"
+      name: aadhaar_last4
+      type: string
+      multiplicity: S
+      validation: "4 digits"
+
+    - id: "1016"
+      name: passport_number
+      type: string
+      multiplicity: M
+
+    - id: "1017"
+      name: driving_licence_number
+      type: string
+      multiplicity: M
+
+    - id: "1018"
+      name: voter_id
+      type: string
+      multiplicity: M
+
+  contact:
+    - id: "1008"
+      name: mobile
+      type: phone
+      multiplicity: M
+
+    - id: "1009"
+      name: email
+      type: email
+      multiplicity: M
+
+  banking:
+    - id: "1019"
+      name: bank_name
+      type: string
+      multiplicity: M
+
+    - id: "1020"
+      name: account_number
+      type: string
+      multiplicity: M
+
+    - id: "1021"
+      name: customer_id
+      type: string
+      multiplicity: M
+
+    - id: "1022"
+      name: cif_number
+      type: string
+      multiplicity: M
+
+    - id: "1023"
+      name: crn
+      type: string
+      multiplicity: M
+
+    - id: "1024"
+      name: ifsc
+      type: string
+      multiplicity: M
+      normalization: uppercase
+
+    - id: "1025"
+      name: account_holder_name
+      type: string
+      multiplicity: M
+
+    - id: "1026"
+      name: cardholder_name
+      type: string
+      multiplicity: M
+
+    - id: "1027"
+      name: card_number
+      type: string
+      multiplicity: M
+      sensitive: true
+
+    - id: "1028"
+      name: card_last4
+      type: string
+      multiplicity: M
+      validation: "4 digits"
+
+  investment:
+    - id: "1029"
+      name: bo_id
+      type: string
+      multiplicity: M
+
+    - id: "1030"
+      name: folio_number
+      type: string
+      multiplicity: M
+
+    - id: "1031"
+      name: first_holder_pan
+      type: string
+      multiplicity: M
+      normalization: uppercase
+
+    - id: "1032"
+      name: investor_name
+      type: string
+      multiplicity: M
+
+  insurance:
+    - id: "1033"
+      name: policyholder_name
+      type: string
+      multiplicity: M
+
+    - id: "1034"
+      name: policy_number
+      type: string
+      multiplicity: M
+
+  vehicle:
+    - id: "1035"
+      name: vehicle_registration_number
+      type: string
+      multiplicity: M
+      normalization: uppercase
+
+    - id: "1036"
+      name: chassis_number
+      type: string
+      multiplicity: M
+      normalization: uppercase
+
+  employment:
+    - id: "1037"
+      name: employee_id
+      type: string
+      multiplicity: M
+
+    - id: "1038"
+      name: uan
+      type: string
+      multiplicity: M
+
+    - id: "1039"
+      name: employer_name
+      type: string
+      multiplicity: M
+
+  utilities:
+    - id: "1040"
+      name: service_provider_name
+      type: string
+      multiplicity: M
+
+    - id: "1041"
+      name: service_registered_name
+      type: string
+      multiplicity: M
+
+    - id: "1042"
+      name: service_number
+      type: string
+      multiplicity: M
+
+    - id: "1043"
+      name: consumer_number
+      type: string
+      multiplicity: M
