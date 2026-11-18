@@ -1,5 +1,5 @@
 # PDF Unlocker — Default Profile Template
-# Version 1
+# Release: Alpha v1
 #
 # This file defines the available profile fields.
 # Actual personal values are stored separately in profiles/.
@@ -14,10 +14,14 @@
 #
 # IDs are permanent and must never be reused.
 # Rules must reference parent field IDs, not suffixed value IDs.
+#
+# DATE FORMAT:
+# birth_date is stored as DDMMYYYY.
 
 template:
   name: default_profile
   version: 1
+  stage: alpha
   country_scope: IN
 
 field_registry:
@@ -27,51 +31,43 @@ field_registry:
   # ==========================================
   personal:
 
-    # Personal title: Mr, Mrs, Ms, Dr, etc.
     - id: "1001"
       name: title
       type: string
       multiplicity: S
 
-    # Given name of the profile owner.
     - id: "1002"
       name: first_name
       type: string
       multiplicity: S
 
-    # Middle name. Can be used to generate initials.
     - id: "1003"
       name: middle_name
       type: string
       multiplicity: S
 
-    # Family name or surname.
     - id: "1004"
       name: last_name
       type: string
       multiplicity: S
 
-    # Date of birth.
-    # Stored as YYYY-MM-DD; password rules can use other formats.
     - id: "1005"
       name: birth_date
       type: date
       multiplicity: S
-      format: YYYY-MM-DD
+      format: DDMMYYYY
 
   # ==========================================
   # GOVERNMENT AND IDENTITY
   # ==========================================
   identity:
 
-    # Permanent Account Number.
     - id: "1006"
       name: pan
       type: string
       multiplicity: S
       normalization: uppercase
 
-    # Six-digit Indian postal PIN code.
     - id: "1007"
       name: pincode
       type: string
@@ -83,13 +79,11 @@ field_registry:
   # ==========================================
   contact:
 
-    # Mobile numbers associated with the profile.
     - id: "1008"
       name: mobile
       type: phone
       multiplicity: M
 
-    # Email addresses associated with the profile.
     - id: "1009"
       name: email
       type: email
@@ -100,19 +94,16 @@ field_registry:
   # ==========================================
   banking:
 
-    # Bank account numbers belonging to the profile owner.
     - id: "1020"
       name: account_number
       type: string
       multiplicity: M
 
-    # Customer identification numbers assigned by banks.
     - id: "1021"
       name: customer_id
       type: string
       multiplicity: M
 
-    # Customer Relationship Numbers (CRN) assigned by banks.
     - id: "1023"
       name: crn
       type: string
@@ -123,14 +114,12 @@ field_registry:
   # ==========================================
   vehicle:
 
-    # Vehicle registration number, for example GJ10AB1234.
     - id: "1035"
       name: vehicle_registration_number
       type: string
       multiplicity: M
       normalization: uppercase
 
-    # Vehicle chassis number or VIN.
     - id: "1036"
       name: chassis_number
       type: string
