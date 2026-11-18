@@ -1,0 +1,26 @@
+# Python cache and compiled files
+__pycache__/
+*.py[cod]
+
+# Local application settings
+config/settings.json
+
+# Runtime database and personal profile data
+database/*
+!database/.gitkeep
+profiles/*
+!profiles/.gitkeep
+
+# Runtime files
+logs/*
+!logs/.gitkeep
+temp/*
+!temp/.gitkeep
+exports/*
+!exports/.gitkeep
+
+# Temporary and test artifacts
+*.tmp
+*.log
+.coverage
+.pytest_cache/
