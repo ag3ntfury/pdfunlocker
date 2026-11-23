@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pdfunlocker"
-version = "0.1.0"
+version = "1.3.3a1"
 description = "Local PDF management and password recovery utility"
 requires-python = ">=3.10"
 dependencies = ["PyYAML>=6.0"]
@@ -17,3 +17,13 @@ package-dir = {"" = "src"}
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+norecursedirs = [
+    "backups",
+    "pdfunlocker_v1_1_ranking_implementation",
+    ".git",
+    ".venv",
+    "venv"
+]

@@ -1,44 +1,42 @@
+"""Automatic installer and setup commands for PDF Unlocker Alpha 1.3.3."""
+
 import argparse
 import json
 import os
 import platform
-import re
 import shlex
 import shutil
 import sys
+from datetime import datetime
 from pathlib import Path
 
 from pdfunlocker import __version__
-from pdfunlocker.cli.profiles import (
-    add_profile_commands,
-    create_profile_interactive,
+from pdfunlocker.cli.profiles import add_profile_commands
+from pdfunlocker.config.paths import (
+    create_internal_structure,
+    create_public_structure,
+    default_paths,
+    resolve_paths,
+    validate_path_relationships,
 )
-from pdfunlocker.profiles.store import initialize_database, list_profiles
-import sqlite3
-from pdfunlocker.setup.scan_locations import (
-    is_android,
-    select_scan_locations,
-)
+from pdfunlocker.database.backup import migrate_database
+from pdfunlocker.setup.scan_locations import is_android, select_scan_locations
 
 
-PDF_STORAGE_FOLDERS = [
-    "Inbox",
-    "Original",
-    "Unlocked",
-    "Locked",
-    "Unsupported",
-    "Duplicates",
-    "Export/Profiles",
-    "Export/Database",
-]
-
-APP_DIRECTORIES = [
-    "src",
-    "templates",
+APP_DIRECTORIES = ("src", "templates", "docs", "scripts")
+RUNTIME_DATA_DIRECTORIES = (
+    "profiles",
     "rules",
-    "docs",
-    "scripts",
-]
+    "learning",
+    "backups",
+    "logs",
+    "storage",
+    "queue",
+    "reports",
+    "temp",
+    "cache",
+)
+DATABASE_NAME = "pdfunlocker.db"
 
 
 def detect_environment():
@@ -51,200 +49,160 @@ def detect_environment():
 
 def get_default_paths():
     environment, environment_name = detect_environment()
-    home = Path.home()
-
-    pdf_storage = (
-        Path("/storage/emulated/0/PDFUnlocker")
-        if environment == "android"
-        else home / "PDFUnlocker"
-    )
-
+    defaults = default_paths(environment)
     return {
         "environment": environment,
         "environment_name": environment_name,
-        "install_path": home / "pdfunlocker",
-        "pdf_storage": pdf_storage,
+        "install_path": defaults["installation"],
+        "pdf_storage_root": defaults["pdf_storage_root"],
+        "processed": defaults["processed"],
+        "exports": defaults["exports"],
     }
-
-
-def ask_path(label, default):
-    while True:
-        raw = input(f"{label} [{default}]: ").strip()
-
-        if not raw:
-            return default.resolve()
-
-        if any(char in raw for char in ("\x00", "\n", "\r", "[", "]")):
-            print("Invalid path. Check for accidental brackets or control characters.")
-            continue
-
-        try:
-            return Path(raw).expanduser().resolve()
-        except (OSError, RuntimeError, ValueError):
-            print("Invalid path. Please enter a valid directory path.")
 
 
 def is_inside(path, parent):
     try:
-        path.relative_to(parent)
+        Path(path).resolve().relative_to(Path(parent).resolve())
         return True
-    except ValueError:
+    except (ValueError, OSError, RuntimeError):
         return False
 
 
-def validate_directory_relationships(install_path, pdf_storage):
-    if install_path == Path("/") or install_path == Path.home():
-        raise RuntimeError(
-            "The installation directory cannot be the root or home directory."
-        )
-
-    if (
-        pdf_storage == install_path
-        or is_inside(pdf_storage, install_path)
-        or is_inside(install_path, pdf_storage)
-    ):
-        raise RuntimeError(
-            "Installation and PDF storage directories must be separate."
-        )
+def validate_directory_relationships(install_path, pdf_storage_root):
+    try:
+        validate_path_relationships(install_path, pdf_storage_root)
+    except ValueError as exc:
+        raise RuntimeError(str(exc)) from exc
 
 
-def prepare_pdf_storage(pdf_storage):
-    pdf_storage.mkdir(parents=True, exist_ok=True)
+def prepare_pdf_storage(pdf_storage_root):
+    return create_public_structure(pdf_storage_root)
 
-    if not pdf_storage.is_dir():
-        raise RuntimeError("PDF storage path is not a directory.")
 
-    if not os.access(pdf_storage, os.R_OK | os.W_OK | os.X_OK):
-        raise RuntimeError(
-            "PDF storage directory is not accessible or writable."
-        )
+def _copy_missing_tree(source, destination):
+    """Copy user data without replacing any file already at the destination."""
+    source = Path(source)
+    destination = Path(destination)
+    if not source.is_dir() or source.is_symlink():
+        return
 
-    for folder in PDF_STORAGE_FOLDERS:
-        path = pdf_storage / folder
-        path.mkdir(parents=True, exist_ok=True)
-
-        if not os.access(path, os.R_OK | os.W_OK | os.X_OK):
-            raise RuntimeError(f"Folder is not writable: {path}")
-
-    print(f"\nPDF storage ready: {pdf_storage}")
+    destination.mkdir(parents=True, exist_ok=True)
+    for item in source.iterdir():
+        if item.is_symlink():
+            continue
+        target = destination / item.name
+        if item.is_dir():
+            _copy_missing_tree(item, target)
+        elif item.is_file() and not target.exists():
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(item, target)
 
 
 def copy_application(source, destination):
+    """Install application code and migrate missing user data without overwrites."""
+    source = Path(source).expanduser().resolve()
+    destination = Path(destination).expanduser().resolve()
     destination.mkdir(parents=True, exist_ok=True)
 
-    for name in APP_DIRECTORIES:
-        source_dir = source / name
-
-        if source_dir.is_dir():
-            shutil.copytree(
-                source_dir,
-                destination / name,
-                dirs_exist_ok=True,
-                ignore=shutil.ignore_patterns(
-                    "__pycache__", "*.pyc", ".git"
-                ),
-            )
-
-    for name in ("pyproject.toml", "README.md", "LICENSE"):
-        source_file = source / name
-
-        if source_file.is_file():
-            shutil.copy2(source_file, destination / name)
-
-    source_config = source / "config"
-    destination_config = destination / "config"
-    destination_config.mkdir(exist_ok=True)
-
-    if source_config.is_dir():
-        for item in source_config.iterdir():
-            if item.name == "settings.json":
-                continue
-
-            target = destination_config / item.name
-
-            if item.is_dir():
+    if source != destination:
+        for name in APP_DIRECTORIES:
+            source_dir = source / name
+            if source_dir.is_dir() and not source_dir.is_symlink():
                 shutil.copytree(
-                    item,
-                    target,
+                    source_dir,
+                    destination / name,
                     dirs_exist_ok=True,
-                    ignore=shutil.ignore_patterns(
-                        "__pycache__", "*.pyc"
-                    ),
+                    ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "*.pyo", ".git"),
                 )
-            elif item.is_file():
-                shutil.copy2(item, target)
 
-    for name in ("database", "profiles", "logs", "temp", "exports"):
-        (destination / name).mkdir(parents=True, exist_ok=True)
+        for name in ("pyproject.toml", "README.md", "LICENSE"):
+            item = source / name
+            if item.is_file() and not item.is_symlink():
+                shutil.copy2(item, destination / name)
 
-    required = destination / "src/pdfunlocker/cli/main.py"
+        # Preserve settings if the destination has none. Existing destination
+        # settings always take precedence and are backed up before setup updates.
+        source_config = source / "config"
+        target_config = destination / "config"
+        if source_config.is_dir():
+            target_config.mkdir(parents=True, exist_ok=True)
+            for item in source_config.iterdir():
+                if item.is_symlink():
+                    continue
+                target = target_config / item.name
+                if item.name == "settings.json":
+                    if not target.exists() and item.is_file():
+                        shutil.copy2(item, target)
+                elif item.is_dir():
+                    _copy_missing_tree(item, target)
+                elif item.is_file() and not target.exists():
+                    shutil.copy2(item, target)
 
-    if not required.is_file():
+        # User-owned runtime content is copied only when the destination file
+        # does not exist. This preserves profiles, learning state, rules, logs,
+        # backups and private PDF data without destructive merging.
+        for name in RUNTIME_DATA_DIRECTORIES:
+            _copy_missing_tree(source / name, destination / name)
+
+    create_internal_structure(destination)
+    if not (destination / "src/pdfunlocker/cli/main.py").is_file():
         raise RuntimeError("Application copy verification failed.")
-
-    print(f"Application files installed in: {destination}")
+    print(f"Application files ready in: {destination}")
+    return destination
 
 
 def register_launcher(install_path):
     if is_android():
-        bin_dir = Path(os.environ["PREFIX"]) / "bin"
+        prefix = os.environ.get("PREFIX")
+        if not prefix:
+            raise RuntimeError("Termux PREFIX is unavailable; cannot register launcher.")
+        bin_dir = Path(prefix) / "bin"
     else:
         bin_dir = Path.home() / ".local" / "bin"
 
     bin_dir.mkdir(parents=True, exist_ok=True)
-
-    command_name = re.sub(
-        r"[^a-zA-Z0-9_-]+",
-        "",
-        install_path.name.lower(),
-    )
-
-    if not command_name:
-        raise RuntimeError(
-            "Cannot create a command name from this directory."
-        )
-
-    launcher = bin_dir / command_name
-    python_executable = shlex.quote(sys.executable)
-    project_path = shlex.quote(str(install_path))
-
+    launcher = bin_dir / "pdfunlocker"
     launcher.write_text(
         "#!/bin/sh\n"
-        f"PROJECT={project_path}\n"
-        'cd "$PROJECT" || exit 1\n'
-        'export PYTHONPATH="$PROJECT/src"\n'
-        f"exec {python_executable} -m pdfunlocker \"$@\"\n",
+        + f"PROJECT={shlex.quote(str(Path(install_path).resolve()))}\n"
+        + 'cd "$PROJECT" || exit 1\n'
+        + 'export PYTHONPATH="$PROJECT/src"\n'
+        + f"exec {shlex.quote(sys.executable)} -m pdfunlocker \"$@\"\n",
         encoding="utf-8",
     )
-
     launcher.chmod(0o755)
+    print(f"Command registered: pdfunlocker ({launcher})")
+    return launcher
 
-    print(f"Command registered: {command_name}")
-    return command_name
+
+def load_settings(config_file):
+    config_file = Path(config_file)
+    if not config_file.is_file():
+        return {}
+    try:
+        value = json.loads(config_file.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise RuntimeError(f"Cannot read existing configuration safely: {exc}") from exc
+    if not isinstance(value, dict):
+        raise RuntimeError("Existing settings must contain a JSON object.")
+    return value
+
+
+def backup_settings(config_file):
+    config_file = Path(config_file)
+    if not config_file.is_file():
+        return None
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
+    backup = config_file.with_name(f"settings.json.before-v1.3-{stamp}")
+    shutil.copy2(config_file, backup)
+    return backup
 
 
 def save_settings(config_file, settings):
-    config_file.parent.mkdir(parents=True, exist_ok=True)
-
-    if config_file.exists():
-        try:
-            existing = json.loads(
-                config_file.read_text(encoding="utf-8")
-            )
-        except (OSError, json.JSONDecodeError) as error:
-            raise RuntimeError(
-                f"Cannot read existing configuration safely: {error}"
-            )
-
-        if not isinstance(existing, dict):
-            raise RuntimeError(
-                "Existing settings must contain a JSON object."
-            )
-    else:
-        existing = {}
-
+    config_file = Path(config_file)
+    existing = load_settings(config_file)
     existing.update(settings)
-
+    config_file.parent.mkdir(parents=True, exist_ok=True)
     temporary = config_file.with_suffix(".json.tmp")
     temporary.write_text(
         json.dumps(existing, indent=2, ensure_ascii=False) + "\n",
@@ -253,228 +211,308 @@ def save_settings(config_file, settings):
     temporary.replace(config_file)
 
 
-def run_setup(args=None):
-    paths = get_default_paths()
-
-    if paths["environment"] not in ("android", "linux"):
-        raise RuntimeError(
-            f"Unsupported environment: {paths['environment_name']}"
+def _database_candidates(source_install, target_install):
+    source_install = Path(source_install).resolve()
+    target_install = Path(target_install).resolve()
+    target = target_install / "database" / DATABASE_NAME
+    canonical = source_install / "database" / DATABASE_NAME
+    legacy = [
+        source_install / "data" / "database" / DATABASE_NAME,
+        target_install / "data" / "database" / DATABASE_NAME,
+    ]
+    legacy = list(
+        dict.fromkeys(
+            item.resolve()
+            for item in legacy
+            if item.resolve() != target and item.is_file()
         )
+    )
+    return target, canonical, legacy
+
+
+def migrate_existing_database(source_install, target_install):
+    """Copy the canonical DB first; use a single legacy DB only as fallback."""
+    target, canonical, legacy = _database_candidates(source_install, target_install)
+
+    if target.is_file():
+        if target == canonical:
+            return {"database": target, "migrated_from": None}
+        if canonical.is_file() or legacy:
+            raise RuntimeError(
+                "Destination database already exists alongside another database "
+                "candidate. No database was overwritten; reconcile them first."
+            )
+        return {"database": target, "migrated_from": None}
+
+    if canonical.is_file():
+        return {
+            "database": migrate_database(canonical, target),
+            "migrated_from": canonical,
+        }
+
+    if len(legacy) > 1:
+        raise RuntimeError(
+            "Multiple legacy databases found; no automatic choice was made: "
+            + ", ".join(map(str, legacy))
+        )
+    if legacy:
+        return {
+            "database": migrate_database(legacy[0], target),
+            "migrated_from": legacy[0],
+        }
+    return {"database": target, "migrated_from": None}
+
+
+def _scan_settings(environment, pdf_storage_root, install_path):
+    return select_scan_locations(
+        environment,
+        pdf_storage_root,
+        installation=install_path,
+        default=False,
+        home=Path.home(),
+    )
+
+
+def _write_scan_settings(install_path, settings, scan_settings):
+    config_file = Path(install_path) / "config" / "settings.json"
+    existing = load_settings(config_file)
+
+    paths = dict(existing.get("paths", {}))
+    defaults = default_paths(settings["environment"])
+    paths.update({
+        "installation": str(install_path),
+        "pdf_storage_root": str(defaults["pdf_storage_root"]),
+        "pdf_storage": str(defaults["pdf_storage_root"]),
+        "processed": str(defaults["processed"]),
+        "exports": str(defaults["exports"]),
+    })
+
+    setup_state = dict(existing.get("setup", {}))
+    setup_state.update({
+        "paths_configured": True,
+        "scan_locations_configured": True,
+        "installer_stage_completed": True,
+        "installer_stage": "scan_configured",
+        "completed": False,
+    })
+    setup_state.setdefault("database_initialized", (Path(install_path) / "database" / DATABASE_NAME).is_file())
+    setup_state.setdefault("profile_configured", False)
+
+    updated = dict(existing)
+    updated.update({
+        "environment": settings["environment"],
+        "paths": paths,
+        "scan": scan_settings,
+        "setup": setup_state,
+    })
+
+    backup = backup_settings(config_file)
+    save_settings(config_file, updated)
+    return backup
+
+
+def run_setup(args=None):
+    """Automatic installation; finishes after scan-location configuration."""
+    defaults = get_default_paths()
+    environment = defaults["environment"]
+    if environment not in ("android", "linux"):
+        raise RuntimeError(f"Unsupported environment: {defaults['environment_name']}")
 
     source_install = Path(__file__).resolve().parents[3]
+    install_path = Path(defaults["install_path"]).expanduser().resolve()
+    pdf_storage_root = Path(defaults["pdf_storage_root"]).expanduser().resolve()
 
-    print("\nPDF Unlocker - Setup")
-    print("====================")
-    print(f"Detected environment: {paths['environment_name']}")
+    validate_directory_relationships(install_path, pdf_storage_root)
 
-    print("\n===== DIRECTORY SETTINGS =====")
+    print("\nPDF Unlocker — Alpha 1.3.3 Installer")
+    print("====================================")
+    print(f"Detected environment: {defaults['environment_name']}")
+    print(f"Application directory: {install_path}")
+    print(f"Public PDF directory: {pdf_storage_root}")
+    print("Installation paths are automatic; no manual path selection is available.")
 
-    install_path = ask_path(
-        "Installation directory",
-        source_install,
-    )
+    if install_path.exists() and not install_path.is_dir():
+        raise RuntimeError("The application installation path exists and is not a directory.")
+    if source_install != install_path and is_inside(install_path, source_install):
+        raise RuntimeError("The destination installation cannot be inside the source project.")
 
-    if install_path == Path("/") or install_path == Path.home():
-        raise RuntimeError(
-            "That installation directory is not allowed."
-        )
+    print("\n===== SCAN LOCATION SETUP =====")
+    scan_settings = _scan_settings(environment, pdf_storage_root, install_path)
+    if not isinstance(scan_settings, dict) or not scan_settings.get("locations"):
+        raise RuntimeError("At least one valid scan location must be selected.")
 
-    if install_path != source_install:
-        if is_inside(install_path, source_install):
-            raise RuntimeError(
-                "A new installation cannot be created inside "
-                "the current installation."
-            )
+    exclusions = set(scan_settings.get("exclude_paths", []))
+    exclusions.add(str(install_path))
+    exclusions.add(str(pdf_storage_root))
+    if source_install != install_path:
+        exclusions.add(str(source_install))
+    scan_settings["exclude_paths"] = sorted(exclusions)
 
-        if install_path.exists() and not install_path.is_dir():
-            raise RuntimeError(
-                "Installation path exists and is not a directory."
-            )
+    # Prepare the target without overwriting user-owned files.
+    copy_application(source_install, install_path)
+    create_internal_structure(install_path)
+    create_public_structure(pdf_storage_root)
 
-        if install_path.exists() and any(install_path.iterdir()):
-            answer = input(
-                f"\n{install_path} already contains files. "
-                "Merge application files into this directory? [y/N]: "
-            ).strip().lower()
+    migration = migrate_existing_database(source_install, install_path)
+    config_file = install_path / "config" / "settings.json"
+    existing = load_settings(config_file)
 
-            if answer not in ("y", "yes"):
-                raise RuntimeError("Installation cancelled.")
-
-        install_path.parent.mkdir(parents=True, exist_ok=True)
-        copy_application(source_install, install_path)
-
-    pdf_storage = ask_path(
-        "PDF storage directory",
-        paths["pdf_storage"],
-    )
-
-    validate_directory_relationships(install_path, pdf_storage)
-    prepare_pdf_storage(pdf_storage)
-
-    command_name = register_launcher(install_path)
-
-    print("\n===== SCAN LOCATION SELECTION =====")
-
-    scan_settings = select_scan_locations(
-        paths["environment"],
-        pdf_storage,
-    )
-
-    if (
-        not isinstance(scan_settings, dict)
-        or not isinstance(scan_settings.get("locations"), list)
-        or not scan_settings["locations"]
-    ):
-        raise RuntimeError(
-            "At least one valid scan location must be selected."
-        )
+    # Existing settings, profiles, learning records and backups remain intact.
+    # A fresh installation remains incomplete until the later profile stage.
+    old_setup = existing.get("setup", {})
+    if not isinstance(old_setup, dict):
+        old_setup = {}
+    setup_state = dict(old_setup)
+    setup_state.update({
+        "paths_configured": True,
+        "scan_locations_configured": True,
+        "installer_stage_completed": True,
+        "installer_stage": "scan_configured",
+        "database_initialized": migration["database"].is_file(),
+        "profile_configured": False,  # Alpha 1.3.3 deliberately stops before profile setup.
+        "completed": False,
+    })
 
     settings = {
-        "environment": paths["environment"],
+        "environment": environment,
         "paths": {
             "installation": str(install_path),
-            "pdf_storage": str(pdf_storage),
+            "pdf_storage_root": str(pdf_storage_root),
+            "pdf_storage": str(pdf_storage_root),
+            "processed": str(pdf_storage_root / "Processed"),
+            "exports": str(pdf_storage_root / "Export"),
         },
         "scan": scan_settings,
-        "setup": {
-            "paths_configured": True,
-            "scan_locations_configured": True,
-            "database_initialized": False,
-            "profile_configured": False,
-            "completed": False,
-        },
+        "setup": setup_state,
     }
 
-    config_file = install_path / "config" / "settings.json"
+    settings_backup = backup_settings(config_file)
     save_settings(config_file, settings)
+    launcher = register_launcher(install_path)
 
-    print("\n===== SCAN CONFIGURATION SAVED =====")
-    print(f"Installation: {install_path}")
-    print(f"PDF storage: {pdf_storage}")
-    print(f"Configuration: {config_file}")
+    print("\n===== AUTOMATIC INSTALLATION COMPLETE =====")
+    print(f"Application: {install_path}")
+    print(f"Database: {migration['database']}")
+    if migration["migrated_from"]:
+        print(f"Database copied safely from: {migration['migrated_from']}")
+        print("Original database retained unchanged.")
+
+    print(f"Public PDF storage: {pdf_storage_root}")
+    print(f"Processed PDFs: {pdf_storage_root / 'Processed'}")
+    print(f"Exports: {pdf_storage_root / 'Export'}")
 
     print("\nSelected scan locations:")
+    for item in scan_settings["locations"]:
+        print(f"  {item}")
+
+    print("\nExcluded paths:")
+    for item in scan_settings["exclude_paths"]:
+        print(f"  {item}")
+
+    if settings_backup:
+        print(f"Previous settings backup: {settings_backup}")
+
+    print(f"Launcher: {launcher}")
+    print("Profile configuration: pending.")
+    print("Overall setup remains incomplete until the profile stage.")
+    print("Source PDFs were not moved, renamed or deleted.")
+    return 0
+
+
+def run_scan_configure(args=None):
+    """Change scan roots without reinstalling or changing other user data."""
+    install_path = Path(__file__).resolve().parents[3]
+    config_file = install_path / "config" / "settings.json"
+    settings = load_settings(config_file)
+
+    environment = settings.get("environment")
+    if environment not in ("android", "linux"):
+        environment, _ = detect_environment()
+
+    resolved = resolve_paths(install_path, settings)
+    pdf_storage_root = resolved["pdf_storage_root"]
+
+    print("\nPDF Unlocker — Scan Location Configuration")
+    scan_settings = _scan_settings(environment, pdf_storage_root, install_path)
+    exclusions = set(scan_settings.get("exclude_paths", []))
+    exclusions.add(str(install_path))
+    exclusions.add(str(pdf_storage_root))
+    scan_settings["exclude_paths"] = sorted(exclusions)
+
+    updated = dict(settings)
+    updated["environment"] = environment
+    updated["scan"] = scan_settings
+    setup_state = dict(updated.get("setup", {}))
+    setup_state["scan_locations_configured"] = True
+    setup_state["installer_stage"] = "scan_configured"
+    setup_state["installer_stage_completed"] = True
+    setup_state["completed"] = False
+    updated["setup"] = setup_state
+
+    backup = backup_settings(config_file)
+    save_settings(config_file, updated)
+
+    print("\nScan locations updated:")
     for location in scan_settings["locations"]:
         print(f"  {location}")
+    if backup:
+        print(f"Previous settings backup: {backup}")
+    print("Application files, database and profile data were not changed.")
+    return 0
 
-    print("\nRecursive scanning: enabled")
-    print("Follow symbolic links: disabled")
-    print("File type: PDF only")
-    print("Duplicate detection: SHA-256")
 
-    # Initialize the database without deleting existing profiles.
-    print("\n===== DATABASE INITIALIZATION =====")
-    database_path = install_path / "database" / "pdfunlocker.db"
-    initialize_database(database_path)
-    print(f"Database ready: {database_path}")
+def run_database_export(args=None):
+    install_path = Path(__file__).resolve().parents[3]
+    settings = load_settings(install_path / "config" / "settings.json")
+    resolved = resolve_paths(install_path, settings)
+    from pdfunlocker.database.backup import export_database
 
-    # Record database initialization immediately, even if profile setup is cancelled.
-    settings["setup"]["database_initialized"] = True
-    save_settings(config_file, settings)
-
-    # Require at least one enabled profile before completing setup.
-    enabled_profiles = list_profiles(
-        database_path,
-        include_disabled=False,
+    result = export_database(
+        resolved["database"],
+        resolved["pdf_storage_root"],
+        kind="automatic" if args and args.automatic else "manual",
+        recovery_directory=resolved["database_backups"],
+        export_root=resolved["exports"],
     )
-
-    if not enabled_profiles:
-        print("\n===== FIRST PROFILE SETUP =====")
-        print("At least one enabled profile is required to complete setup.")
-
-        profile_id = create_profile_interactive(install_path)
-
-        if not profile_id:
-            raise RuntimeError(
-                "Profile creation was cancelled. Installation remains incomplete. "
-                "Run setup again to finish."
-            )
-
-    enabled_profiles = list_profiles(
-        database_path,
-        include_disabled=False,
-    )
-
-    if not enabled_profiles:
-        raise RuntimeError(
-            "No enabled profile exists. Enable or create a profile, then run setup again."
-        )
-
-    # Record profile configuration separately from final installation completion.
-    settings["setup"]["profile_configured"] = True
-    save_settings(config_file, settings)
-
-    # Validate the final installation paths and required directories.
-    if not (install_path / "src" / "pdfunlocker" / "__main__.py").is_file():
-        raise RuntimeError("Application files are missing from the installation directory.")
-
-    if not database_path.is_file():
-        raise RuntimeError("Profile database initialization failed.")
-
-    if not pdf_storage.is_dir():
-        raise RuntimeError("PDF storage directory is missing.")
-
-    for folder in PDF_STORAGE_FOLDERS:
-        if not (pdf_storage / folder).is_dir():
-            raise RuntimeError(f"Required PDF storage folder is missing: {folder}")
-
-    # Mark setup complete only after every required stage succeeds.
-    settings["setup"]["completed"] = True
-
-    save_settings(config_file, settings)
-
-    print("\n===== INSTALLATION COMPLETED =====")
-    print(f"Installation: {install_path}")
-    print(f"PDF storage: {pdf_storage}")
-    print(f"Database: {database_path}")
-    print(f"Enabled profiles: {len(enabled_profiles)}")
-    print(f"Configuration: {config_file}")
-    print(f"Command: {command_name}")
-    print("\nPDF Unlocker is ready.")
+    print(f"Database export created: {result['export']}")
+    print(f"Private recovery snapshot: {result['recovery']}")
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        prog="pdfunlocker",
-        description="PDF Unlocker",
-    )
-
-    parser.add_argument(
-        "--version",
-        action="version",
-        version=f"pdfunlocker {__version__}",
-    )
-
+    parser = argparse.ArgumentParser(prog="pdfunlocker", description="PDF Unlocker")
+    parser.add_argument("--version", action="version", version=f"pdfunlocker {__version__}")
     subparsers = parser.add_subparsers(dest="command")
 
-    setup_parser = subparsers.add_parser(
-        "setup",
-        help="Configure PDF Unlocker for first use",
-    )
+    setup_parser = subparsers.add_parser("setup", help="Run automatic installation and scan setup")
     setup_parser.set_defaults(func=run_setup)
-
-    install_parser = subparsers.add_parser(
-        "install",
-        help="Alias for setup",
-    )
+    install_parser = subparsers.add_parser("install", help="Alias for automatic setup")
     install_parser.set_defaults(func=run_setup)
+
+    scan_parser = subparsers.add_parser("scan", help="Manage PDF scan locations")
+    scan_commands = scan_parser.add_subparsers(dest="scan_command", required=True)
+    configure_parser = scan_commands.add_parser("configure", help="Change scan locations")
+    configure_parser.set_defaults(func=run_scan_configure)
 
     add_profile_commands(subparsers)
 
-    args = parser.parse_args()
+    database_parser = subparsers.add_parser("database", help="Database maintenance")
+    database_commands = database_parser.add_subparsers(dest="database_command", required=True)
+    export_parser = database_commands.add_parser("export", help="Create a verified database export")
+    export_parser.add_argument("--automatic", action="store_true")
+    export_parser.set_defaults(func=run_database_export)
 
+    args = parser.parse_args()
     if not args.command:
         parser.print_help()
         return 0
 
     try:
-        args.func(args)
-    except (OSError, RuntimeError, ValueError, sqlite3.Error) as error:
-        print(f"\nPDF UNLOCKER ERROR: {error}", file=sys.stderr)
+        result = args.func(args)
+        return result if isinstance(result, int) else 0
+    except (RuntimeError, ValueError, OSError, FileNotFoundError, FileExistsError) as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
         return 1
-
-    return 0
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    raise SystemExit(main())

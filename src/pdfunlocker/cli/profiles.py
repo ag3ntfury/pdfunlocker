@@ -3,6 +3,7 @@
 import sqlite3
 from pathlib import Path
 
+from pdfunlocker.config.paths import resolve_paths
 from pdfunlocker.profiles.store import (
     connect,
     create_profile,
@@ -24,10 +25,10 @@ def paths(root=None):
         root = Path(__file__).resolve().parents[3]
     else:
         root = Path(root).expanduser().resolve()
-
+    resolved = resolve_paths(root)
     return {
         "root": root,
-        "database": root / "database" / "pdfunlocker.db",
+        "database": resolved["database"],
         "template": root / "templates" / "profile" / "default_profile_template.yml",
     }
 

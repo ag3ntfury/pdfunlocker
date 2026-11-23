@@ -1,17 +1,10 @@
+"""Platform-specific, read-only PDF scan-location configuration."""
+
 import os
-import shlex
 from pathlib import Path
 
 
 ANDROID_STORAGE = Path("/storage/emulated/0")
-
-PSEUDO_FILESYSTEMS = {
-    "proc", "sysfs", "devtmpfs", "devpts", "tmpfs", "cgroup",
-    "cgroup2", "pstore", "securityfs", "debugfs", "tracefs",
-    "configfs", "fusectl", "mqueue", "hugetlbfs", "rpc_pipefs",
-    "autofs", "binfmt_misc",
-}
-
 SYSTEM_MOUNTS = ("/proc", "/sys", "/dev", "/run")
 
 
@@ -24,36 +17,26 @@ def is_android():
     )
 
 
-def resolve_directory(value):
-    path = Path(value).expanduser()
-    return path.resolve(strict=True)
-
-
 def is_inside(path, parent):
     try:
-        return os.path.commonpath([str(path), str(parent)]) == str(parent)
-    except ValueError:
+        Path(path).resolve().relative_to(Path(parent).resolve())
+        return True
+    except (ValueError, OSError, RuntimeError):
         return False
 
 
-def add_location(locations, candidate):
-    """Add a location while avoiding duplicate or nested scan roots."""
-    if any(is_inside(candidate, existing) for existing in locations):
-        return False
-
-    locations[:] = [
-        existing for existing in locations
-        if not is_inside(existing, candidate)
-    ]
-    locations.append(candidate)
-    return True
+def resolve_directory(value):
+    raw = Path(value).expanduser()
+    if raw.is_symlink():
+        raise ValueError("Symbolic-link scan roots are not allowed.")
+    return raw.resolve(strict=True)
 
 
 def validate_directory(value):
     try:
         path = resolve_directory(value)
     except (OSError, RuntimeError, ValueError):
-        return None, "Folder does not exist or cannot be accessed."
+        return None, "Folder does not exist, is a symbolic link, or cannot be accessed."
 
     if not path.is_dir():
         return None, "The selected path is not a directory."
@@ -64,272 +47,192 @@ def validate_directory(value):
     return path, None
 
 
-def android_scan_locations(pdf_storage):
+def add_location(locations, candidate):
+    """Add a scan root while removing duplicate or nested roots."""
+    candidate = Path(candidate).resolve()
+    if any(is_inside(candidate, existing) for existing in locations):
+        return False
+
+    locations[:] = [
+        Path(existing).resolve()
+        for existing in locations
+        if not is_inside(existing, candidate)
+    ]
+    locations.append(candidate)
+    return True
+
+
+def android_scan_locations(pdf_storage, home=None):
+    """Show actual top-level shared-storage folders and accept numbered choices.
+
+    Empty input means the complete shared internal storage. Termux HOME is
+    deliberately not included.
+    """
+    storage = ANDROID_STORAGE.resolve(strict=True)
+    pdf_storage = Path(pdf_storage).expanduser().resolve()
+
+    entries = sorted(
+        (
+            item for item in storage.iterdir()
+            if item.is_dir()
+            and not item.is_symlink()
+            and os.access(item, os.R_OK | os.X_OK)
+        ),
+        key=lambda item: item.name.casefold(),
+    )
+
     print("\n===== ANDROID SCAN LOCATIONS =====")
-    print(f"Default location: {ANDROID_STORAGE}")
-    print("Press ENTER to scan the entire internal shared storage.")
-    print("Or enter a folder name, such as Download or Documents.")
-    print("You can also enter a subfolder, such as WhatsApp/Media.")
+    print(f"Default: Entire shared internal storage ({storage})")
+    print("\nAvailable folders:")
+
+    for index, folder in enumerate(entries, start=1):
+        print(f"  {index}. {folder.name}")
+
+    print("\nEnter one number or multiple numbers separated by commas (example: 3,5,2,7).")
+    print("Press ENTER without a number to scan the entire shared internal storage.")
 
     while True:
-        choice = input("\nLocation: ").strip()
+        choice = input("\nFolder numbers: ").strip()
 
         if not choice:
-            locations = [ANDROID_STORAGE.resolve()]
-            print(f"Selected entire storage: {locations[0]}")
-            return locations
+            print(f"Selected entire shared internal storage: {storage}")
+            return [storage]
 
-        candidate_input = Path(choice).expanduser()
-
-        if candidate_input.is_absolute():
-            candidate = candidate_input
-        else:
-            candidate = ANDROID_STORAGE / candidate_input
-
-        path, error = validate_directory(candidate)
-
-        if error:
-            print(f"Invalid location: {error}")
+        try:
+            numbers = [int(token.strip()) for token in choice.split(",")]
+            if not numbers or any(number < 1 or number > len(entries) for number in numbers):
+                raise ValueError
+        except ValueError:
+            print(f"Invalid selection. Enter numbers from 1 to {len(entries)}, separated by commas.")
             continue
 
-        if not is_inside(path, ANDROID_STORAGE.resolve()):
-            print("Please choose a folder inside /storage/emulated/0.")
+        selected = []
+        for number in numbers:
+            folder = entries[number - 1].resolve()
+            if folder == pdf_storage or is_inside(folder, pdf_storage):
+                print(f"Skipped PDF Unlocker output folder: {folder}")
+                continue
+            if add_location(selected, folder):
+                print(f"Added: {folder}")
+            else:
+                print(f"Already covered by another selection: {folder}")
+
+        if selected:
+            return selected
+
+        print("No eligible folders selected. Please choose again.")
+
+
+def linux_scan_locations(pdf_storage, home=None):
+    """Use HOME when no custom paths are entered; otherwise use custom paths only."""
+    home = Path(home or Path.home()).expanduser().resolve(strict=True)
+    pdf_storage = Path(pdf_storage).expanduser().resolve()
+
+    print("\n===== LINUX SCAN LOCATIONS =====")
+    print(f"Default scan location:\n  {home}")
+    print("Press ENTER to use the default location, or enter a full directory path.")
+    print("Add paths one at a time. Press ENTER on an empty prompt to finish.")
+
+    locations = []
+    while True:
+        value = input("\nFolder: ").strip()
+
+        if not value:
+            if locations:
+                break
+            print(f"Using default scan location: {home}")
+            return [home]
+
+        candidate = Path(value).expanduser()
+        if not candidate.is_absolute():
+            print("Please enter an absolute directory path.")
+            continue
+
+        path, error = validate_directory(candidate)
+        if error:
+            print(f"Invalid location {value}: {error}")
             continue
 
         if path == pdf_storage or is_inside(path, pdf_storage):
-            print("PDF Unlocker storage cannot be selected for scanning.")
+            print("PDF Unlocker public output cannot be selected as a scan root.")
             continue
 
-        return android_additional_locations(path)
-
-
-def android_additional_locations(first_location):
-    locations = [first_location]
-
-    print(f"Added: {first_location}")
-    print("Enter another folder name, or press ENTER to finish.")
-
-    while True:
-        choice = input("\nNext folder (ENTER to finish): ").strip()
-
-        if not choice:
-            break
-
-        candidate_input = Path(choice).expanduser()
-        candidate = (
-            candidate_input
-            if candidate_input.is_absolute()
-            else ANDROID_STORAGE / candidate_input
-        )
-
-        path, error = validate_directory(candidate)
-
-        if error:
-            print(f"Invalid location: {error}")
-            continue
-
-        if not is_inside(path, ANDROID_STORAGE.resolve()):
-            print("Please choose a folder inside /storage/emulated/0.")
-            continue
-
-        if path == ANDROID_STORAGE.resolve():
-            print("The entire storage is already covered by this selection.")
-            continue
-
-        added = add_location(locations, path)
-
-        if added:
+        if add_location(locations, path):
             print(f"Added: {path}")
         else:
-            print("This folder is already covered by another selected location.")
+            print(f"Already covered by another selected location: {path}")
 
-    return locations
-
-
-def decode_mount_path(value):
-    return (
-        value.replace("\\040", " ")
-        .replace("\\011", "\t")
-        .replace("\\012", "\n")
-        .replace("\\134", "\\")
-    )
-
-
-def get_linux_mounts():
-    mounts = []
-    seen = set()
-
-    try:
-        with open("/proc/self/mounts", encoding="utf-8") as file:
-            for line in file:
-                fields = shlex.split(line)
-
-                if len(fields) < 3:
-                    continue
-
-                mountpoint = Path(decode_mount_path(fields[1]))
-                filesystem = fields[2]
-
-                if filesystem in PSEUDO_FILESYSTEMS:
-                    continue
-
-                try:
-                    mountpoint = mountpoint.resolve(strict=True)
-                except (OSError, RuntimeError):
-                    continue
-
-                if not mountpoint.is_dir():
-                    continue
-
-                if not os.access(mountpoint, os.R_OK | os.X_OK):
-                    continue
-
-                if any(
-                    mountpoint == Path(item)
-                    or is_inside(mountpoint, Path(item))
-                    for item in SYSTEM_MOUNTS
-                ):
-                    continue
-
-                if mountpoint in seen:
-                    continue
-
-                seen.add(mountpoint)
-                mounts.append(mountpoint)
-
-    except OSError:
-        pass
-
-    if Path("/").resolve() not in seen:
-        mounts.insert(0, Path("/").resolve())
-
-    return sorted(mounts, key=lambda path: (len(str(path)), str(path)))
-
-
-def linux_scan_locations(pdf_storage):
-    print("\n===== LINUX SCAN LOCATIONS =====")
-    print("1. Scan mounted partitions")
-    print("2. Choose individual folders")
-
-    while True:
-        choice = input("Select option [1]: ").strip() or "1"
-
-        if choice in ("1", "2"):
-            break
-
-        print("Please enter 1 or 2.")
-
-    if choice == "1":
-        mounts = get_linux_mounts()
-
-        print("\nAvailable accessible mounted locations:")
-        for index, mount in enumerate(mounts, start=1):
-            print(f"  {index}. {mount}")
-
-        print("\nPress ENTER to select all listed locations.")
-        print("Or enter partition numbers separated by commas.")
-
-        while True:
-            selection = input("Partitions: ").strip()
-
-            if not selection:
-                locations = mounts[:]
-                break
-
-            try:
-                numbers = [
-                    int(item.strip())
-                    for item in selection.split(",")
-                ]
-
-                if not numbers or any(
-                    number < 1 or number > len(mounts)
-                    for number in numbers
-                ):
-                    raise ValueError
-
-                locations = []
-                for number in numbers:
-                    add_location(locations, mounts[number - 1])
-                break
-
-            except ValueError:
-                print("Invalid selection. Example: 1,2,3")
-
-    else:
-        locations = []
-
-        print("\nEnter absolute folder paths.")
-        print("Press ENTER when you have finished.")
-
-        while True:
-            value = input("Folder: ").strip()
-
-            if not value:
-                if locations:
-                    break
-                print("Please select at least one folder.")
-                continue
-
-            path, error = validate_directory(value)
-
-            if error:
-                print(f"Invalid location: {error}")
-                continue
-
-            if add_location(locations, path):
-                print(f"Added: {path}")
-            else:
-                print("This folder is already covered by another selection.")
-
-    if pdf_storage in locations:
-        locations.remove(pdf_storage)
-
-    print("\nSelected scan locations:")
+    print("\nSelected custom scan locations:")
     for path in locations:
         print(f"  {path}")
-
     return locations
 
 
-def select_scan_locations(environment, pdf_storage):
+def select_scan_locations(environment, pdf_storage, installation=None, default=False, home=None):
+    """Build the scanner configuration for Android or Linux."""
     pdf_storage = Path(pdf_storage).expanduser().resolve()
+    installation = Path(installation).expanduser().resolve() if installation else None
+    home = Path(home or Path.home()).expanduser().resolve()
 
     if environment == "android":
-        locations = android_scan_locations(pdf_storage)
+        if default:
+            locations = [ANDROID_STORAGE.resolve(strict=True)]
+        else:
+            locations = android_scan_locations(pdf_storage, home=home)
+    elif environment == "linux":
+        if default:
+            locations = [home.resolve(strict=True)]
+        else:
+            locations = linux_scan_locations(pdf_storage, home=home)
     else:
-        locations = linux_scan_locations(pdf_storage)
+        raise RuntimeError(f"Unsupported scan environment: {environment}")
 
+    # Remove scan roots that are themselves generated output or private app data.
     locations = [
-        path for path in locations
-        if path != pdf_storage and not is_inside(path, pdf_storage)
+        Path(path).resolve()
+        for path in locations
+        if Path(path).resolve() != pdf_storage
+        and not is_inside(Path(path).resolve(), pdf_storage)
+        and not (
+            installation
+            and (
+                Path(path).resolve() == installation
+                or is_inside(Path(path).resolve(), installation)
+            )
+        )
     ]
 
     if not locations:
         raise RuntimeError("No valid scan locations were selected.")
 
-    # Record nested selected mount points as per-location exclusions.
-    location_exclusions = {}
+    # Ensure stable, non-overlapping roots even if a caller supplied duplicates.
+    normalized = []
+    for location in locations:
+        add_location(normalized, location)
+    locations = normalized
 
+    exclusions = {str(pdf_storage)}
+    if installation:
+        exclusions.add(str(installation))
+    if environment == "linux":
+        exclusions.update(SYSTEM_MOUNTS)
+        for relative in (".cache", ".local/share/Trash", ".local/share/virtualenvs"):
+            exclusions.add(str(home / relative))
+
+    location_exclusions = {}
     for parent in locations:
         nested = [
-            str(child)
-            for child in locations
+            str(child) for child in locations
             if child != parent and is_inside(child, parent)
         ]
         if nested:
             location_exclusions[str(parent)] = nested
 
-    exclusions = [str(pdf_storage)]
-
-    if environment == "linux":
-        exclusions.extend(SYSTEM_MOUNTS)
-
     return {
         "locations": [str(path) for path in locations],
         "recursive": True,
         "follow_symlinks": False,
-        "exclude_paths": sorted(set(exclusions)),
+        "exclude_paths": sorted(exclusions),
         "location_exclusions": location_exclusions,
         "file_extensions": [".pdf"],
         "duplicate_detection": "sha256",

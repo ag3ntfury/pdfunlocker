@@ -1,29 +1,67 @@
 # Python cache and compiled files
 __pycache__/
 *.py[cod]
+.pytest_cache/
+.coverage
+*.egg-info/
 
 # Local application settings
 config/settings.json
 
-# Runtime database and personal profile data
+# Runtime database and HMAC key
 database/*
 !database/.gitkeep
+
+# Personal profile data
 profiles/*
 !profiles/.gitkeep
 
-# Runtime files
+# Runtime logs
 logs/*
 !logs/.gitkeep
+*.log
+
+# Temporary files
 temp/*
 !temp/.gitkeep
+*.tmp
+
+# Exported files
 exports/*
 !exports/.gitkeep
 
-# Temporary and test artifacts
-*.tmp
-*.log
-.coverage
-.pytest_cache/
+# Runtime PDF workflow data (keep directory placeholders)
+data/incoming/*
+!data/incoming/.gitkeep
+data/temp/*
+!data/temp/.gitkeep
+data/unlocked/*
+!data/unlocked/.gitkeep
 
-# Generated Python package metadata
-*.egg-info/
+# Migration backups and non-active reference implementation
+backups/
+pdfunlocker_v1_1_ranking_implementation/
+
+# Persistent application data (never commit personal data or active databases)
+data/database/*
+!data/database/.gitkeep
+data/profiles/*
+!data/profiles/.gitkeep
+data/learning/*
+!data/learning/.gitkeep
+data/backups/*
+!data/backups/.gitkeep
+
+# PDF Unlocker v1.3 private runtime state
+storage/*
+!storage/.gitkeep
+queue/*
+!queue/.gitkeep
+learning/*
+!learning/.gitkeep
+backups/*
+!backups/.gitkeep
+reports/*
+!reports/.gitkeep
+cache/*
+!cache/.gitkeep
