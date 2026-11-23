@@ -284,3 +284,21 @@ This document is the approved v1 baseline.
 Future changes should be documented as v1.1, v1.2 or v2.0 as appropriate.
 
 Existing approved requirements must not be changed silently.
+
+
+---
+
+## Revision notice
+
+The approved path, persistent-data and export requirements have been superseded by **[PATH_DATA_EXPORT_REVISION_V1_2.md](PATH_DATA_EXPORT_REVISION_V1_2.md)**. The v1 document remains as a historical baseline; use v1.2 for current installation, data and export behavior.
+
+---
+
+## Revision notice — v1.3
+
+The v1.3 path, installer and scan setup architecture supersedes earlier path
+examples in this historical specification. See
+[PATH_INSTALLER_SCAN_REVISION_V1_3.md](PATH_INSTALLER_SCAN_REVISION_V1_3.md)
+for the canonical Android/Linux defaults, fixed private directory tree, public
+Processed/Export layout, scan defaults, migration safeguards and profile-layer
+boundary.

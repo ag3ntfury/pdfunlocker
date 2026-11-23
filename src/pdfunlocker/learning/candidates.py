@@ -23,6 +23,15 @@ from pdfunlocker.profiles.store import (
 
 ALLOWED_TRANSFORMS = {"lower", "upper", "raw"}
 KEY_SIZE = 32
+MAX_CANDIDATES_PER_RULE = 10_000
+
+
+class CandidateLimitExceeded(ValueError):
+    """Raised when a rule produces more than the configured unique candidates."""
+
+    def __init__(self, limit=MAX_CANDIDATES_PER_RULE):
+        self.limit = limit
+        super().__init__(f"Rule exceeds the maximum of {limit:,} unique candidates.")
 
 
 def _required_text(value, field):
@@ -317,6 +326,10 @@ def generate_candidates(
 
             seen.add(candidate)
             unique_candidates.append(candidate)
+
+            if len(unique_candidates) > MAX_CANDIDATES_PER_RULE:
+                # Reject the complete rule; never return or execute a partial set.
+                raise CandidateLimitExceeded()
 
     candidate_records = []
 

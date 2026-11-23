@@ -6,8 +6,6 @@ import yaml
 
 
 ROOT = Path(__file__).resolve().parents[1]
-PRODUCTION = Path.home() / "pdfunlocker"
-
 PROFILE_TEMPLATE = "templates/profile/default_profile_template.yml"
 RULE_TEMPLATE = "templates/rules/default_rule_template.yml"
 
@@ -165,25 +163,6 @@ class ProjectIntegrityTests(unittest.TestCase):
             with self.subTest(rule=path.name):
                 self.assertIn(data["status"], {"active", "inactive"})
 
-    def test_profile_template_matches_production(self):
-        source = ROOT / PROFILE_TEMPLATE
-        target = PRODUCTION / PROFILE_TEMPLATE
-        self.assertTrue(target.is_file())
-        self.assertEqual(source.read_bytes(), target.read_bytes())
-
-    def test_rule_template_matches_production(self):
-        source = ROOT / RULE_TEMPLATE
-        target = PRODUCTION / RULE_TEMPLATE
-        self.assertTrue(target.is_file())
-        self.assertEqual(source.read_bytes(), target.read_bytes())
-
-    def test_all_30_rules_match_production(self):
-        for source in sorted((ROOT / "rules").glob("rule*.yml")):
-            target = PRODUCTION / "rules" / source.name
-            with self.subTest(rule=source.name):
-                self.assertTrue(target.is_file())
-                self.assertEqual(source.read_bytes(), target.read_bytes())
-
     def test_test_settings_exist(self):
         self.assertTrue((ROOT / "config/settings.json").is_file())
 
@@ -192,36 +171,53 @@ class ProjectIntegrityTests(unittest.TestCase):
             (ROOT / "config/settings.json").read_text(encoding="utf-8")
         )
         self.assertIsInstance(data, dict)
+        self.assertIn("paths", data)
+        self.assertIn("installation", data["paths"])
+        self.assertIn("pdf_storage", data["paths"])
 
-    def test_test_installation_path_is_correct(self):
+    def test_test_installation_and_pdf_library_are_separate(self):
         data = json.loads(
             (ROOT / "config/settings.json").read_text(encoding="utf-8")
         )
-        self.assertEqual(
-            Path(data["paths"]["installation"]).resolve(),
-            ROOT.resolve(),
-        )
+        installation = Path(data["paths"]["installation"]).expanduser().resolve()
+        pdf_library = Path(data["paths"]["pdf_storage"]).expanduser().resolve()
+        self.assertNotEqual(installation, pdf_library)
 
-    def test_test_pdf_storage_is_not_production_storage(self):
-        data = json.loads(
-            (ROOT / "config/settings.json").read_text(encoding="utf-8")
-        )
-        self.assertNotEqual(
-            Path(data["paths"]["pdf_storage"]),
-            Path("/storage/emulated/0/PDFUnlocker"),
-        )
+    def test_deployment_copy_has_templates_and_rules_and_keeps_settings(self):
+        import tempfile
+        from pdfunlocker.cli.main import copy_application
 
-    def test_production_and_test_installations_are_separate(self):
-        test_data = json.loads(
-            (ROOT / "config/settings.json").read_text(encoding="utf-8")
-        )
-        production_data = json.loads(
-            (PRODUCTION / "config/settings.json").read_text(encoding="utf-8")
-        )
-        self.assertNotEqual(
-            test_data["paths"]["installation"],
-            production_data["paths"]["installation"],
-        )
+        with tempfile.TemporaryDirectory() as temporary:
+            production = Path(temporary) / "production"
+            (production / "config").mkdir(parents=True)
+            sentinel = {"preserve": "existing-production-settings"}
+            (production / "config/settings.json").write_text(
+                json.dumps(sentinel), encoding="utf-8"
+            )
+
+            copy_application(ROOT, production)
+
+            self.assertEqual(
+                json.loads((production / "config/settings.json").read_text()),
+                sentinel,
+            )
+            self.assertEqual(
+                (production / PROFILE_TEMPLATE).read_bytes(),
+                (ROOT / PROFILE_TEMPLATE).read_bytes(),
+            )
+            self.assertEqual(
+                (production / RULE_TEMPLATE).read_bytes(),
+                (ROOT / RULE_TEMPLATE).read_bytes(),
+            )
+            source_rules = sorted((ROOT / "rules").glob("rule*.yml"))
+            deployed_rules = sorted((production / "rules").glob("rule*.yml"))
+            self.assertEqual(len(deployed_rules), 30)
+            self.assertEqual(
+                [p.read_bytes() for p in source_rules],
+                [p.read_bytes() for p in deployed_rules],
+            )
+            self.assertTrue((production / "database").is_dir())
+            self.assertTrue((production / "profiles").is_dir())
 
 
 if __name__ == "__main__":

@@ -1,3 +1,4 @@
+import errno
 import hashlib
 import tempfile
 import unittest
@@ -215,6 +216,10 @@ class ArchiveTests(unittest.TestCase):
             raise OSError("Simulated interruption during fallback copy")
 
         with patch(
+            "pdfunlocker.archive.os.link",
+            side_effect=OSError(errno.EXDEV, "cross-device link"),
+            create=True,
+        ), patch(
             "pdfunlocker.archive._copy_exclusive",
             side_effect=simulate_interrupted_copy,
         ):

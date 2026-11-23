@@ -1,0 +1,22 @@
+PDF Unlocker — Phase 1 approved-v1 implementation overlay
+
+Target branch: feature/workflow-engine
+Target baseline commit: 5b9d192b4e0bbec84fa43c5a7f5fcabda24a3391
+
+Files included:
+- src/pdfunlocker/learning/ranking.py (complete replacement)
+- src/pdfunlocker/learning/candidates.py (complete replacement)
+- tests/test_learning_ranking_v1_1.py (replaced obsolete v1.1 threshold tests with approved-v1 acceptance tests)
+- tests/test_learning_candidate_limit.py (limit contract tests)
+
+Policy implemented:
+- Rank tested rules by PDF-level success rate, descending.
+- Tie-break by successful distinct PDF count, then YAML order.
+- Untested rules remain last in YAML order.
+- No 100-PDF threshold.
+- Batch 1 can use completed global history from other profiles.
+- Count only completed batches and deduplicate SHA per rule.
+- Candidate generation allows 10,000 unique values; discovering the 10,001st raises CandidateLimitExceeded. No partial candidate set is returned.
+- SQLite schema unchanged.
+
+Install only on the stated branch and commit. The installer command supplied separately makes timestamped backups before replacing files. It does not delete untracked files or push to GitHub.

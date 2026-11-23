@@ -3,6 +3,7 @@
 import sqlite3
 from pathlib import Path
 
+from pdfunlocker.config.paths import resolve_paths
 from pdfunlocker.profiles.store import (
     connect,
     create_profile,
@@ -11,6 +12,7 @@ from pdfunlocker.profiles.store import (
     initialize_database,
     list_profiles,
     load_field_registry,
+    next_profile_id,
     remove_profile_value,
     reorder_profile,
     set_profile_enabled,
@@ -24,10 +26,10 @@ def paths(root=None):
         root = Path(__file__).resolve().parents[3]
     else:
         root = Path(root).expanduser().resolve()
-
+    resolved = resolve_paths(root)
     return {
         "root": root,
-        "database": root / "database" / "pdfunlocker.db",
+        "database": resolved["database"],
         "template": root / "templates" / "profile" / "default_profile_template.yml",
     }
 
@@ -49,24 +51,82 @@ def prompt(message):
         return None
 
 
+def _collect_initial_profile_values(profile_id, database, template, fields):
+    """Collect optional profile fields in template order.
+
+    Single-value fields are prompted once. Multiple-value fields repeat until
+    Enter is pressed. Ctrl+C/EOF stops collection but keeps the already-created
+    profile and any values collected so far.
+    """
+    print("\n===== PROFILE DETAILS =====")
+    print("Press Enter to skip an optional field.")
+    print("For multiple-value fields, press Enter when you have finished that field.")
+
+    for field_id, field in fields.items():
+        label = field["name"].replace("_", " ").title()
+
+        if field["multiplicity"] == "M":
+            print(f"\n{label} (multiple; optional)")
+            while True:
+                value = prompt(f"  {label} value (Enter to finish): ")
+                if value is None:
+                    print("Profile details entry stopped. Saved values are retained.")
+                    return
+                if not value:
+                    break
+                try:
+                    value_id = set_profile_value(
+                        database, template, profile_id, field_id, value
+                    )
+                    print(f"  Saved: {value_id}")
+                except ValueError as error:
+                    print(f"  Not saved: {error}")
+        else:
+            while True:
+                value = prompt(f"{label} (optional): ")
+                if value is None:
+                    print("Profile details entry stopped. Saved values are retained.")
+                    return
+                if not value:
+                    break
+                try:
+                    value_id = set_profile_value(
+                        database, template, profile_id, field_id, value
+                    )
+                    print(f"  Saved: {value_id}")
+                    break
+                except ValueError as error:
+                    print(f"  Not saved: {error}")
+
+
 def create_profile_interactive(root=None):
     p = paths(root)
 
     print("\n===== CREATE PROFILE =====")
-    name = prompt("Profile name: ")
+    initialize_database(p["database"])
 
+    # Preview only: this does not update app_metadata or consume an ID.
+    preview_id = next_profile_id(p["database"])
+    print(f"Next available profile ID: {preview_id}")
+
+    name = prompt("Profile name: ")
     if name is None or not name:
-        print("Cancelled. No profile created.")
+        print("Cancelled. No profile created; the profile ID remains available.")
         return None
 
-    initialize_database(p["database"])
+    # The ID becomes permanent only after the accepted name is committed.
     profile_id = create_profile(p["database"], name)
+    profile, _ = get_profile(p["database"], profile_id)
 
     print(f"\nProfile created: {profile_id}")
-    print(f"Name: {name}")
-    print("The profile is saved, even if you leave it empty.")
+    print(f"Name: {profile['name']}")
 
-    profile_editor(profile_id, root=p["root"])
+    fields = load_field_registry(p["template"])
+    _collect_initial_profile_values(
+        profile_id, p["database"], p["template"], fields
+    )
+
+    print(f"\nProfile saved: {profile_id}")
     return profile_id
 
 

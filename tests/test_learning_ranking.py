@@ -132,7 +132,7 @@ class LearningRankingTests(unittest.TestCase):
             ["00010", "00017", "00018", "00030"],
         )
 
-    def test_first_batch_uses_original_order(self):
+    def test_first_batch_uses_yaml_order_when_no_global_history(self):
         self.add_batch(self.profile_one, 1, ["a" * 64])
 
         self.assertEqual(
@@ -236,6 +236,7 @@ class LearningRankingTests(unittest.TestCase):
         self.assertEqual(stats["00010"]["successful_files"], 1)
 
     def test_inactive_rules_are_excluded(self):
+        self.add_batch(self.profile_one, 1, ["e" * 64])
         self.assertNotIn(
             "00025",
             get_rule_order(
@@ -261,6 +262,63 @@ class LearningRankingTests(unittest.TestCase):
             order,
             ["00018", "00010", "00017", "00030"],
         )
+
+
+    def test_first_batch_uses_global_history_from_another_profile(self):
+        sha_previous = "c" * 64
+        sha_new = "d" * 64
+        self.add_batch(self.profile_one, 1, [sha_previous])
+        self.add_run(
+            self.profile_one, 1, sha_previous, "00018", "success"
+        )
+        self.add_batch(self.profile_two, 1, [sha_new])
+
+        self.assertEqual(
+            get_rule_order(
+                self.database, self.rules_dir,
+                self.profile_two, 1,
+            )[0],
+            "00018",
+        )
+
+    def test_error_no_candidates_and_skipped_are_not_attempts(self):
+        hashes = [f"{n:064x}" for n in range(1, 4)]
+        self.add_batch(self.profile_one, 1, hashes)
+        self.add_run(self.profile_one, 1, hashes[0], "00010", "error")
+        self.add_run(self.profile_one, 1, hashes[1], "00010", "no_candidates")
+        self.add_run(self.profile_one, 1, hashes[2], "00010", "skipped")
+
+        stats = get_completed_rule_statistics(self.database)
+        self.assertNotIn("00010", stats)
+
+    def test_success_and_exhausted_are_distinct_pdf_denominator(self):
+        hashes = [f"{n:064x}" for n in range(1, 4)]
+        self.add_batch(self.profile_one, 1, hashes)
+        self.add_run(self.profile_one, 1, hashes[0], "00010", "success")
+        self.add_run(self.profile_one, 1, hashes[0], "00010", "exhausted")
+        self.add_run(self.profile_one, 1, hashes[1], "00010", "exhausted")
+        self.add_run(self.profile_one, 1, hashes[2], "00010", "error")
+
+        stats = get_completed_rule_statistics(self.database)
+        self.assertEqual(stats["00010"]["successful_files"], 1)
+        self.assertEqual(stats["00010"]["attempted_files"], 2)
+        self.assertEqual(stats["00010"]["success_rate"], 0.5)
+
+    def test_batch_one_must_exist(self):
+        with self.assertRaisesRegex(ValueError, "does not exist"):
+            get_rule_order(
+                self.database, self.rules_dir,
+                self.profile_one, 1,
+            )
+
+    def test_missing_intermediate_batch_is_rejected(self):
+        self.add_batch(self.profile_one, 1, ["a" * 64])
+        self.add_batch(self.profile_one, 3, ["b" * 64])
+        with self.assertRaisesRegex(ValueError, "missing"):
+            get_rule_order(
+                self.database, self.rules_dir,
+                self.profile_one, 3,
+            )
 
     def test_invalid_batch_number_rejected(self):
         for number in (0, -1, 1.5, True):
