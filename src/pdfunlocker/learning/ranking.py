@@ -1,5 +1,4 @@
-"""Global rule ranking based on completed learning batches."""
-
+"""Global staged rule ranking across all PDF Unlocker profiles."""
 from pathlib import Path
 
 import yaml
@@ -9,16 +8,14 @@ from pdfunlocker.learning.database import (
     initialize_learning_database,
 )
 
+GLOBAL_RATE_THRESHOLD = 100
+COMPLETED_FILE_STATES = ("unlocked", "locked", "skipped", "failed")
+
 
 def load_active_rules(rules_directory):
-    """Load active rule IDs in their original filename order."""
-
     directory = Path(rules_directory).expanduser()
-
     if not directory.is_dir():
-        raise FileNotFoundError(
-            f"Rules directory not found: {directory}"
-        )
+        raise FileNotFoundError(f"Rules directory not found: {directory}")
 
     rules = []
 
@@ -54,14 +51,34 @@ def load_active_rules(rules_directory):
     return rules
 
 
+def get_global_completed_pdf_count(database_path):
+    """Count unique completed PDFs across every profile."""
+    initialize_learning_database(database_path)
+
+    marks = ",".join("?" for _ in COMPLETED_FILE_STATES)
+
+    with connect(database_path) as db:
+        row = db.execute(f"""
+            SELECT COUNT(DISTINCT f.sha256) AS total
+            FROM learning_batch_files f
+            JOIN learning_batches b
+              ON b.profile_id = f.profile_id
+             AND b.batch_number = f.batch_number
+            WHERE b.status = 'completed'
+              AND f.state IN ({marks})
+        """, COMPLETED_FILE_STATES).fetchone()
+
+    return int(row["total"] or 0)
+
+
 def get_completed_rule_statistics(database_path):
     """
-    Aggregate successful distinct PDFs by rule ID.
+    Count unique PDFs per rule using completed batches only.
 
-    Only runs belonging to completed batches are included.
-    Profile IDs are deliberately not used as ranking dimensions.
+    Successful PDFs are counted once per rule. The success-rate
+    denominator includes PDFs with success or exhausted outcomes.
+    Incomplete batches and non-attempt outcomes are excluded.
     """
-
     initialize_learning_database(database_path)
 
     with connect(database_path) as db:
@@ -69,51 +86,84 @@ def get_completed_rule_statistics(database_path):
             SELECT
                 rr.rule_id,
                 COUNT(DISTINCT CASE
-                    WHEN rr.outcome = 'success' THEN rr.sha256
+                    WHEN rr.outcome = 'success'
+                    THEN rr.sha256
                 END) AS successful_files,
-                COUNT(DISTINCT rr.sha256) AS processed_files
+                COUNT(DISTINCT CASE
+                    WHEN rr.outcome IN ('success', 'exhausted')
+                    THEN rr.sha256
+                END) AS attempted_files
             FROM rule_runs rr
-            JOIN learning_batches lb
-              ON lb.profile_id = rr.profile_id
-             AND lb.batch_number = rr.batch_number
-             AND lb.status = 'completed'
+            JOIN learning_batches b
+              ON b.profile_id = rr.profile_id
+             AND b.batch_number = rr.batch_number
+            WHERE b.status = 'completed'
             GROUP BY rr.rule_id
         """).fetchall()
 
     return {
         row["rule_id"]: {
-            "successful_files": row["successful_files"],
-            "processed_files": row["processed_files"],
+            "successful_files": int(row["successful_files"] or 0),
+            "attempted_files": int(row["attempted_files"] or 0),
+            "processed_files": int(row["attempted_files"] or 0),
+            "success_rate": (
+                row["successful_files"] / row["attempted_files"]
+                if row["attempted_files"]
+                else 0.0
+            ),
         }
         for row in rows
     }
 
 
-def get_rule_order(
-    database_path,
-    rules_directory,
-    profile_id,
-    batch_number,
-):
-    """
-    Return the rule order for a profile batch.
+def _rank(active_rules, stats, use_rate):
+    positions = {
+        rule_id: index
+        for index, rule_id in enumerate(active_rules)
+    }
 
-    Batch 1 always uses original active-rule order.
-    Later batches use cumulative successes from all completed
-    batches across all profiles, followed by unscored active rules
-    in original order.
-    """
+    tested = [
+        rule_id
+        for rule_id in active_rules
+        if stats.get(rule_id, {}).get("attempted_files", 0) > 0
+    ]
 
+    untested = [
+        rule_id
+        for rule_id in active_rules
+        if rule_id not in tested
+    ]
+
+    if use_rate:
+        tested.sort(
+            key=lambda rule_id: (
+                -stats[rule_id]["success_rate"],
+                -stats[rule_id]["successful_files"],
+                positions[rule_id],
+            )
+        )
+    else:
+        tested.sort(
+            key=lambda rule_id: (
+                -stats[rule_id]["successful_files"],
+                positions[rule_id],
+            )
+        )
+
+    return tested + untested
+
+
+def get_rule_order(database_path, rules_directory, profile_id, batch_number):
     if not isinstance(batch_number, int) or isinstance(batch_number, bool):
         raise ValueError("Batch number must be an integer.")
 
     if batch_number < 1:
         raise ValueError("Batch number must be at least 1.")
 
-    active_rules = load_active_rules(rules_directory)
+    active = load_active_rules(rules_directory)
 
     if batch_number == 1:
-        return active_rules
+        return active
 
     initialize_learning_database(database_path)
 
@@ -128,12 +178,14 @@ def get_rule_order(
             raise ValueError("Requested batch does not exist.")
 
         previous = db.execute("""
-            SELECT COUNT(*) AS total,
-                   SUM(CASE WHEN status = 'completed'
-                       THEN 1 ELSE 0 END) AS completed
+            SELECT
+                COUNT(*) AS total,
+                SUM(
+                    CASE WHEN status = 'completed'
+                    THEN 1 ELSE 0 END
+                ) AS completed
             FROM learning_batches
-            WHERE profile_id = ?
-              AND batch_number < ?
+            WHERE profile_id = ? AND batch_number < ?
         """, (str(profile_id), batch_number)).fetchone()
 
         if previous["total"] != previous["completed"]:
@@ -141,49 +193,49 @@ def get_rule_order(
                 "Earlier batches for this profile are not all completed."
             )
 
-    statistics = get_completed_rule_statistics(database_path)
+    total = get_global_completed_pdf_count(database_path)
+    stats = get_completed_rule_statistics(database_path)
 
-    original_positions = {
-        rule_id: index
-        for index, rule_id in enumerate(active_rules)
-    }
-
-    ranked = sorted(
-        active_rules,
-        key=lambda rule_id: (
-            -statistics.get(rule_id, {}).get("successful_files", 0),
-            int(rule_id),
-            original_positions[rule_id],
-        ),
+    return _rank(
+        active,
+        stats,
+        total >= GLOBAL_RATE_THRESHOLD,
     )
-
-    return ranked
 
 
 def get_rule_ranking(database_path, rules_directory):
-    """Return global ranking details for active rules."""
+    active = load_active_rules(rules_directory)
 
-    active_rules = load_active_rules(rules_directory)
-    statistics = get_completed_rule_statistics(database_path)
+    total = get_global_completed_pdf_count(database_path)
+    use_rate = total >= GLOBAL_RATE_THRESHOLD
 
-    ranked = sorted(
-        active_rules,
-        key=lambda rule_id: (
-            -statistics.get(rule_id, {}).get("successful_files", 0),
-            int(rule_id),
-        ),
-    )
+    stats = get_completed_rule_statistics(database_path)
+    ranked = _rank(active, stats, use_rate)
 
-    result = []
-
-    for position, rule_id in enumerate(ranked, start=1):
-        stats = statistics.get(rule_id, {})
-
-        result.append({
-            "rank": position,
+    return [
+        {
+            "rank": index,
             "rule_id": rule_id,
-            "successful_files": stats.get("successful_files", 0),
-            "processed_files": stats.get("processed_files", 0),
-        })
-
-    return result
+            "successful_files": stats.get(
+                rule_id, {}
+            ).get("successful_files", 0),
+            "processed_files": stats.get(
+                rule_id, {}
+            ).get("attempted_files", 0),
+            "attempted_files": stats.get(
+                rule_id, {}
+            ).get("attempted_files", 0),
+            "success_rate": stats.get(
+                rule_id, {}
+            ).get("success_rate", 0.0),
+            "tested": stats.get(
+                rule_id, {}
+            ).get("attempted_files", 0) > 0,
+            "ranking_method": (
+                "success_rate" if use_rate else "success_count"
+            ),
+            "global_completed_pdfs": total,
+            "threshold": GLOBAL_RATE_THRESHOLD,
+        }
+        for index, rule_id in enumerate(ranked, 1)
+    ]
