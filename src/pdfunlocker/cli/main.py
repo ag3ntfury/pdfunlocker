@@ -311,8 +311,102 @@ def _write_scan_settings(install_path, settings, scan_settings):
     return backup
 
 
+
+
+def run_profile_setup(install_path, config_file):
+    """Create or reuse profiles and mark installation complete safely."""
+    from pdfunlocker.cli import profiles as profile_cli
+    from pdfunlocker.profiles.store import initialize_database, list_profiles
+
+    install_path = Path(install_path).expanduser().resolve()
+    config_file = Path(config_file)
+    database = install_path / "database" / DATABASE_NAME
+
+    print()
+    print("===== PROFILE SETUP =====")
+    initialize_database(database)
+
+    profiles = list_profiles(database)
+
+    if profiles:
+        print("Existing profiles found. They will be preserved.")
+    else:
+        print("No profiles exist. At least one enabled profile is required.")
+        created = profile_cli.create_profile_interactive(root=install_path)
+        if created is None:
+            print("Profile setup cancelled. Installation remains incomplete.")
+            return 1
+
+    while True:
+        profiles = list_profiles(database)
+        enabled = [item for item in profiles if item["enabled"]]
+
+        if not enabled:
+            print()
+            print("No enabled profiles are available.")
+            print("Enable a profile using: pdfunlocker profile edit PROFILE_ID")
+            print("Then run 'pdfunlocker setup' again.")
+            return 1
+
+        answer = profile_cli.prompt("Add another profile? [y/N]: ")
+        if answer is None or answer.lower() not in ("y", "yes"):
+            break
+
+        created = profile_cli.create_profile_interactive(root=install_path)
+        if created is None:
+            print("Additional profile creation cancelled.")
+            break
+
+    profiles = list_profiles(database)
+    enabled = [item for item in profiles if item["enabled"]]
+
+    print()
+    print("===== PROFILE EXECUTION ORDER =====")
+    for item in profiles:
+        status = "Enabled" if item["enabled"] else "Disabled"
+        print(
+            f"{item['execution_order']}. {item['profile_id']} "
+            f"- {item['name']} [{status}]"
+        )
+
+    if not enabled:
+        print("Installation remains incomplete: no enabled profile.")
+        return 1
+
+    confirmation = profile_cli.prompt("Confirm this execution order? [Y/n]: ")
+    if confirmation is None or confirmation.lower() not in ("", "y", "yes"):
+        print("Execution order not confirmed. Installation remains incomplete.")
+        print("Review the order with: pdfunlocker profile list")
+        print("Change it with: pdfunlocker profile edit PROFILE_ID")
+        return 1
+
+    existing = load_settings(config_file)
+    setup_state = dict(existing.get("setup", {}))
+    setup_state.update({
+        "paths_configured": True,
+        "scan_locations_configured": True,
+        "database_initialized": True,
+        "profile_configured": True,
+        "installer_stage": "profile_configured",
+        "installer_stage_completed": True,
+        "completed": True,
+    })
+
+    backup = backup_settings(config_file)
+    save_settings(config_file, {"setup": setup_state})
+
+    if backup:
+        print(f"Previous settings backup: {backup}")
+
+    print()
+    print("Profile setup completed.")
+    print("Installation status: COMPLETE")
+    print("Enabled profiles will be available in execution order.")
+    return 0
+
+
 def run_setup(args=None):
-    """Automatic installation; finishes after scan-location configuration."""
+    """Automatic installation followed by the required profile stage."""
     defaults = get_default_paths()
     environment = defaults["environment"]
     if environment not in ("android", "linux"):
@@ -413,10 +507,9 @@ def run_setup(args=None):
         print(f"Previous settings backup: {settings_backup}")
 
     print(f"Launcher: {launcher}")
-    print("Profile configuration: pending.")
-    print("Overall setup remains incomplete until the profile stage.")
     print("Source PDFs were not moved, renamed or deleted.")
-    return 0
+
+    return run_profile_setup(install_path, config_file)
 
 
 def run_scan_configure(args=None):

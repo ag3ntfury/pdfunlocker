@@ -162,6 +162,23 @@ def load_field_registry(template_path):
     return fields
 
 
+def next_profile_id(database_path):
+    """Return the next profile ID without reserving or consuming it."""
+    with connect(database_path) as db:
+        row = db.execute(
+            "SELECT value FROM app_metadata WHERE key = 'next_profile_number'"
+        ).fetchone()
+
+        if row is None:
+            raise RuntimeError("Profile database is not initialized.")
+
+        number = int(row["value"])
+        if number < 1:
+            raise RuntimeError("Invalid next profile number in database.")
+
+        return f"profile{number:04d}"
+
+
 def create_profile(database_path, name):
     name = name.strip()
 
