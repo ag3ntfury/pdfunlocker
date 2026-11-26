@@ -163,25 +163,14 @@ class ProjectIntegrityTests(unittest.TestCase):
             with self.subTest(rule=path.name):
                 self.assertIn(data["status"], {"active", "inactive"})
 
-    def test_test_settings_exist(self):
-        self.assertTrue((ROOT / "config/settings.json").is_file())
+    def test_deployment_copy_does_not_invent_machine_settings(self):
+        import tempfile
+        from pdfunlocker.cli.main import copy_application
 
-    def test_test_settings_are_valid_json(self):
-        data = json.loads(
-            (ROOT / "config/settings.json").read_text(encoding="utf-8")
-        )
-        self.assertIsInstance(data, dict)
-        self.assertIn("paths", data)
-        self.assertIn("installation", data["paths"])
-        self.assertIn("pdf_storage", data["paths"])
-
-    def test_test_installation_and_pdf_library_are_separate(self):
-        data = json.loads(
-            (ROOT / "config/settings.json").read_text(encoding="utf-8")
-        )
-        installation = Path(data["paths"]["installation"]).expanduser().resolve()
-        pdf_library = Path(data["paths"]["pdf_storage"]).expanduser().resolve()
-        self.assertNotEqual(installation, pdf_library)
+        with tempfile.TemporaryDirectory() as temporary:
+            production = Path(temporary) / "production"
+            copy_application(ROOT, production)
+            self.assertFalse((production / "config/settings.json").exists())
 
     def test_deployment_copy_has_templates_and_rules_and_keeps_settings(self):
         import tempfile

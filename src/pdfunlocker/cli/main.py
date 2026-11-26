@@ -509,7 +509,7 @@ def run_setup(args=None):
     print(f"Launcher: {launcher}")
     print("Source PDFs were not moved, renamed or deleted.")
 
-    return run_profile_setup(install_path, config_file)
+    return 0
 
 
 def run_scan_configure(args=None):
