@@ -35,6 +35,7 @@ class LearningRankingTests(unittest.TestCase):
         self.profile_two = create_profile(self.database, "Priya")
         self.now = utc_now()
 
+        self.write_rule("00000", "active")
         self.write_rule("00010", "active")
         self.write_rule("00017", "active")
         self.write_rule("00018", "active")
@@ -126,11 +127,22 @@ class LearningRankingTests(unittest.TestCase):
                 completed_at,
             ))
 
-    def test_active_rules_keep_original_order(self):
+    def test_active_rules_keep_original_order_and_exclude_reserved_rule(self):
         self.assertEqual(
             load_active_rules(self.rules_dir),
             ["00010", "00017", "00018", "00030"],
         )
+
+    def test_reserved_rule_requires_explicit_test_mode(self):
+        self.assertNotIn("00000", load_active_rules(self.rules_dir))
+        self.assertIn(
+            "00000",
+            load_active_rules(self.rules_dir, allow_test_rule=True),
+        )
+
+    def test_reserved_rule_permission_must_be_boolean(self):
+        with self.assertRaisesRegex(ValueError, "boolean"):
+            load_active_rules(self.rules_dir, allow_test_rule=1)
 
     def test_first_batch_uses_yaml_order_when_no_global_history(self):
         self.add_batch(self.profile_one, 1, ["a" * 64])

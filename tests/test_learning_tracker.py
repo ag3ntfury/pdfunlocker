@@ -9,6 +9,7 @@ from pdfunlocker.learning.database import (
     initialize_learning_database,
 )
 from pdfunlocker.learning.tracker import (
+    fail_rule_run,
     finish_rule_run,
     get_rule_run,
     record_candidate_attempt,
@@ -196,6 +197,95 @@ class LearningTrackerTests(unittest.TestCase):
         retry = self.start()
         self.assertEqual(retry["status"], "created")
         self.assertNotEqual(retry["run_id"], run["run_id"])
+
+
+    def test_run_level_error_does_not_count_as_candidate_attempt(self):
+        run = self.start()
+
+        result = fail_rule_run(
+            self.database, run["run_id"], "engine_unexpected_error"
+        )
+
+        details = get_rule_run(self.database, run["run_id"])
+        self.assertEqual(result["outcome"], "error")
+        self.assertFalse(result["duplicate"])
+        self.assertEqual(details["run"]["outcome"], "error")
+        self.assertEqual(details["run"]["attempted_count"], 0)
+        self.assertEqual(details["attempts"], [])
+        self.assertIsNotNone(details["run"]["completed_at"])
+        self.assertEqual(
+            details["run"]["last_error"], "engine_unexpected_error"
+        )
+
+        duplicate = fail_rule_run(
+            self.database, run["run_id"], "engine_unexpected_error"
+        )
+        self.assertTrue(duplicate["duplicate"])
+
+        retry = self.start()
+        self.assertEqual(retry["status"], "created")
+        self.assertNotEqual(retry["run_id"], run["run_id"])
+
+    def test_run_level_error_rejects_completed_run(self):
+        run = self.start()
+        finish_rule_run(self.database, run["run_id"], "no_candidates")
+
+        with self.assertRaisesRegex(ValueError, "not active"):
+            fail_rule_run(
+                self.database, run["run_id"], "engine_unexpected_error"
+            )
+
+
+    def test_completed_success_can_start_a_new_recovery_run(self):
+        original = self.start()
+
+        record_candidate_attempt(
+            self.database,
+            original["run_id"],
+            1,
+            "opaque-candidate-1",
+            "success",
+        )
+
+        historical = get_rule_run(self.database, original["run_id"])
+        self.assertEqual(historical["run"]["outcome"], "success")
+        self.assertEqual(historical["run"]["attempted_count"], 1)
+
+        retry = start_rule_run(
+            self.database,
+            self.sha,
+            self.profile,
+            "00017",
+            "rule-fingerprint-v1",
+            "candidate-set-v1",
+            batch_number=1,
+            retry_completed_success=True,
+        )
+
+        self.assertEqual(retry["status"], "created")
+        self.assertNotEqual(retry["run_id"], original["run_id"])
+        self.assertEqual(retry["attempted_candidates"], [])
+
+        # The original successful history must remain unchanged.
+        historical_after = get_rule_run(
+            self.database, original["run_id"]
+        )
+        self.assertEqual(historical_after["run"]["outcome"], "success")
+        self.assertEqual(historical_after["run"]["attempted_count"], 1)
+        self.assertEqual(len(historical_after["attempts"]), 1)
+
+    def test_retry_completed_success_requires_boolean(self):
+        with self.assertRaisesRegex(ValueError, "must be a boolean"):
+            start_rule_run(
+                self.database,
+                self.sha,
+                self.profile,
+                "00017",
+                "rule-fingerprint-v1",
+                "candidate-set-v1",
+                batch_number=1,
+                retry_completed_success=1,
+            )
 
     def test_changed_candidate_set_starts_new_run(self):
         first = self.start("candidate-set-v1")

@@ -66,12 +66,12 @@ class ProjectIntegrityTests(unittest.TestCase):
                 with self.subTest(category=category, field=field["id"]):
                     self.assertIn(field["multiplicity"], {"S", "M"})
 
-    def test_exactly_30_rule_files_exist(self):
+    def test_exactly_31_rule_files_exist(self):
         files = list((ROOT / "rules").glob("rule*.yml"))
-        self.assertEqual(len(files), 30)
+        self.assertEqual(len(files), 31)
 
     def test_rule_filenames_are_expected(self):
-        expected = {f"rule{i:05d}.yml" for i in range(1, 31)}
+        expected = {f"rule{i:05d}.yml" for i in range(0, 31)}
         actual = {path.name for path in (ROOT / "rules").glob("rule*.yml")}
         self.assertEqual(actual, expected)
 
@@ -163,25 +163,14 @@ class ProjectIntegrityTests(unittest.TestCase):
             with self.subTest(rule=path.name):
                 self.assertIn(data["status"], {"active", "inactive"})
 
-    def test_test_settings_exist(self):
-        self.assertTrue((ROOT / "config/settings.json").is_file())
+    def test_deployment_copy_does_not_invent_machine_settings(self):
+        import tempfile
+        from pdfunlocker.cli.main import copy_application
 
-    def test_test_settings_are_valid_json(self):
-        data = json.loads(
-            (ROOT / "config/settings.json").read_text(encoding="utf-8")
-        )
-        self.assertIsInstance(data, dict)
-        self.assertIn("paths", data)
-        self.assertIn("installation", data["paths"])
-        self.assertIn("pdf_storage", data["paths"])
-
-    def test_test_installation_and_pdf_library_are_separate(self):
-        data = json.loads(
-            (ROOT / "config/settings.json").read_text(encoding="utf-8")
-        )
-        installation = Path(data["paths"]["installation"]).expanduser().resolve()
-        pdf_library = Path(data["paths"]["pdf_storage"]).expanduser().resolve()
-        self.assertNotEqual(installation, pdf_library)
+        with tempfile.TemporaryDirectory() as temporary:
+            production = Path(temporary) / "production"
+            copy_application(ROOT, production)
+            self.assertFalse((production / "config/settings.json").exists())
 
     def test_deployment_copy_has_templates_and_rules_and_keeps_settings(self):
         import tempfile
@@ -209,13 +198,21 @@ class ProjectIntegrityTests(unittest.TestCase):
                 (production / RULE_TEMPLATE).read_bytes(),
                 (ROOT / RULE_TEMPLATE).read_bytes(),
             )
-            source_rules = sorted((ROOT / "rules").glob("rule*.yml"))
+            source_rules = sorted(
+                path for path in (ROOT / "rules").glob("rule*.yml")
+                if path.name != "rule00000.yml"
+            )
             deployed_rules = sorted((production / "rules").glob("rule*.yml"))
             self.assertEqual(len(deployed_rules), 30)
+            self.assertEqual(
+                [path.name for path in deployed_rules],
+                [f"rule{i:05d}.yml" for i in range(1, 31)],
+            )
             self.assertEqual(
                 [p.read_bytes() for p in source_rules],
                 [p.read_bytes() for p in deployed_rules],
             )
+            self.assertFalse((production / "rules/rule00000.yml").exists())
             self.assertTrue((production / "database").is_dir())
             self.assertTrue((production / "profiles").is_dir())
 

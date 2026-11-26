@@ -6,7 +6,10 @@ import yaml
 from pdfunlocker.learning.database import connect, initialize_learning_database
 
 
-def load_active_rules(rules_directory):
+def load_active_rules(rules_directory, allow_test_rule=False):
+    if not isinstance(allow_test_rule, bool):
+        raise ValueError("allow_test_rule must be a boolean.")
+
     directory = Path(rules_directory).expanduser()
     if not directory.is_dir():
         raise FileNotFoundError(f"Rules directory not found: {directory}")
@@ -26,7 +29,9 @@ def load_active_rules(rules_directory):
             raise ValueError(f"Invalid rule ID: {path}")
         if status not in ("active", "inactive"):
             raise ValueError(f"Invalid rule status: {path}")
-        if status == "active":
+        if status == "active" and (
+            rule_id != "00000" or allow_test_rule
+        ):
             rules.append(rule_id)
 
     if len(rules) != len(set(rules)):
