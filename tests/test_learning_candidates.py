@@ -1,6 +1,7 @@
 """Tests for secure PDF password candidate generation."""
 
 import os
+import shutil
 import tempfile
 import unittest
 from pathlib import Path
@@ -96,6 +97,60 @@ class LearningCandidateTests(unittest.TestCase):
             rule_id,
             self.key,
         )
+
+    def test_public_synthetic_fixture_generates_expected_candidates(self):
+        fixture_path = (
+            Path(__file__).resolve().parent
+            / "fixtures"
+            / "public_test_profile"
+            / "profile.yml"
+        )
+        fixture = yaml.safe_load(fixture_path.read_text(encoding="utf-8"))
+
+        self.assertTrue(fixture["profile"]["synthetic"])
+        self.assertEqual(
+            fixture["profile"]["purpose"],
+            "automated-testing-only",
+        )
+
+        # This profile is created only in this test's temporary database.
+        profile_id = create_profile(
+            self.database,
+            fixture["profile"]["name"],
+        )
+
+        for field_id, field_values in fixture["values"].items():
+            values = field_values if isinstance(field_values, list) else [field_values]
+            for value in values:
+                set_profile_value(
+                    self.database,
+                    self.template,
+                    profile_id,
+                    str(field_id),
+                    value,
+                )
+
+        source_rule = (
+            Path(__file__).resolve().parents[1]
+            / "rules"
+            / "rule00000.yml"
+        )
+        shutil.copy2(source_rule, self.rules / "rule00000.yml")
+
+        result = generate_candidates(
+            self.database,
+            self.template,
+            self.rules,
+            profile_id,
+            "00000",
+            self.key,
+        )
+
+        self.assertEqual(
+            [item["value"] for item in result["candidates"]],
+            ["alex1995", "ALEX1995", "Alex1995"],
+        )
+
 
     def test_generates_lower_upper_and_raw(self):
         self.set_value("1002", "RuPeSh")

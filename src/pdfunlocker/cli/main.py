@@ -79,10 +79,11 @@ def prepare_pdf_storage(pdf_storage_root):
     return create_public_structure(pdf_storage_root)
 
 
-def _copy_missing_tree(source, destination):
-    """Copy user data without replacing any file already at the destination."""
+def _copy_missing_tree(source, destination, excluded_files=None):
+    """Copy missing user data without replacing existing destination files."""
     source = Path(source)
     destination = Path(destination)
+    excluded_files = set(excluded_files or ())
     if not source.is_dir() or source.is_symlink():
         return
 
@@ -92,8 +93,8 @@ def _copy_missing_tree(source, destination):
             continue
         target = destination / item.name
         if item.is_dir():
-            _copy_missing_tree(item, target)
-        elif item.is_file() and not target.exists():
+            _copy_missing_tree(item, target, excluded_files)
+        elif item.is_file() and item.name not in excluded_files and not target.exists():
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(item, target)
 
@@ -142,7 +143,12 @@ def copy_application(source, destination):
         # does not exist. This preserves profiles, learning state, rules, logs,
         # backups and private PDF data without destructive merging.
         for name in RUNTIME_DATA_DIRECTORIES:
-            _copy_missing_tree(source / name, destination / name)
+            excluded = {"rule00000.yml"} if name == "rules" else None
+            _copy_missing_tree(
+                source / name,
+                destination / name,
+                excluded_files=excluded,
+            )
 
     create_internal_structure(destination)
     if not (destination / "src/pdfunlocker/cli/main.py").is_file():

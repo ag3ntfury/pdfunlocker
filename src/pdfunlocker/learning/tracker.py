@@ -38,6 +38,7 @@ def start_rule_run(
     rule_fingerprint,
     candidate_set_fingerprint,
     batch_number=None,
+    retry_completed_success=False,
 ):
     """
     Start or resume a rule run.
@@ -60,6 +61,9 @@ def start_rule_run(
 
     if batch_number is not None:
         _positive_integer(batch_number, "batch_number")
+
+    if not isinstance(retry_completed_success, bool):
+        raise ValueError("retry_completed_success must be a boolean.")
 
     initialize_learning_database(database_path)
     now = utc_now()
@@ -123,12 +127,18 @@ def start_rule_run(
                 }
 
             if outcome in TERMINAL_OUTCOMES - {"error"}:
-                return {
-                    "run_id": run_id,
-                    "status": "already_completed",
-                    "outcome": outcome,
-                    "attempted_candidates": attempted_numbers,
-                }
+                # Preserve the successful historical run. The caller may
+                # request a new run when its verified output is unavailable.
+                if not (
+                    outcome == "success"
+                    and retry_completed_success
+                ):
+                    return {
+                        "run_id": run_id,
+                        "status": "already_completed",
+                        "outcome": outcome,
+                        "attempted_candidates": attempted_numbers,
+                    }
 
         cursor = db.execute("""
             INSERT INTO rule_runs (
@@ -281,6 +291,55 @@ def record_candidate_attempt(
             "result": result,
             "duplicate": False,
         }
+
+
+
+def fail_rule_run(database_path, run_id, error_code):
+    """Finish an active run-level error without recording a candidate attempt."""
+    _positive_integer(run_id, "run_id")
+    error_code = _required_text(error_code, "error_code")
+
+    if len(error_code) > 100:
+        raise ValueError("error_code must not exceed 100 characters.")
+
+    initialize_learning_database(database_path)
+    now = utc_now()
+
+    with connect(database_path) as db:
+        run = db.execute("""
+            SELECT outcome, last_error
+            FROM rule_runs
+            WHERE run_id = ?
+        """, (run_id,)).fetchone()
+
+        if run is None:
+            raise ValueError(f"Rule run not found: {run_id}")
+
+        if run["outcome"] != "running":
+            if run["outcome"] == "error" and run["last_error"] == error_code:
+                return {
+                    "run_id": run_id,
+                    "outcome": "error",
+                    "duplicate": True,
+                }
+            raise ValueError(f"Rule run is not active: {run['outcome']}")
+
+        cursor = db.execute("""
+            UPDATE rule_runs
+            SET outcome = 'error',
+                completed_at = ?,
+                last_error = ?
+            WHERE run_id = ? AND outcome = 'running'
+        """, (now, error_code, run_id))
+
+        if cursor.rowcount != 1:
+            raise RuntimeError("Could not safely finish the active rule run.")
+
+    return {
+        "run_id": run_id,
+        "outcome": "error",
+        "duplicate": False,
+    }
 
 
 def finish_rule_run(database_path, run_id, outcome):

@@ -66,12 +66,12 @@ class ProjectIntegrityTests(unittest.TestCase):
                 with self.subTest(category=category, field=field["id"]):
                     self.assertIn(field["multiplicity"], {"S", "M"})
 
-    def test_exactly_30_rule_files_exist(self):
+    def test_exactly_31_rule_files_exist(self):
         files = list((ROOT / "rules").glob("rule*.yml"))
-        self.assertEqual(len(files), 30)
+        self.assertEqual(len(files), 31)
 
     def test_rule_filenames_are_expected(self):
-        expected = {f"rule{i:05d}.yml" for i in range(1, 31)}
+        expected = {f"rule{i:05d}.yml" for i in range(0, 31)}
         actual = {path.name for path in (ROOT / "rules").glob("rule*.yml")}
         self.assertEqual(actual, expected)
 
@@ -198,13 +198,21 @@ class ProjectIntegrityTests(unittest.TestCase):
                 (production / RULE_TEMPLATE).read_bytes(),
                 (ROOT / RULE_TEMPLATE).read_bytes(),
             )
-            source_rules = sorted((ROOT / "rules").glob("rule*.yml"))
+            source_rules = sorted(
+                path for path in (ROOT / "rules").glob("rule*.yml")
+                if path.name != "rule00000.yml"
+            )
             deployed_rules = sorted((production / "rules").glob("rule*.yml"))
             self.assertEqual(len(deployed_rules), 30)
+            self.assertEqual(
+                [path.name for path in deployed_rules],
+                [f"rule{i:05d}.yml" for i in range(1, 31)],
+            )
             self.assertEqual(
                 [p.read_bytes() for p in source_rules],
                 [p.read_bytes() for p in deployed_rules],
             )
+            self.assertFalse((production / "rules/rule00000.yml").exists())
             self.assertTrue((production / "database").is_dir())
             self.assertTrue((production / "profiles").is_dir())
 
