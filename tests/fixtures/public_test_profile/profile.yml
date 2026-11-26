@@ -1,0 +1,45 @@
+# PDF Unlocker public synthetic test profile
+# TEST ONLY — all values are fictional.
+# Never put real personal or financial information here.
+
+profile:
+  id: public-test-profile
+  name: PDF Unlocker Public Test Profile
+  purpose: automated-testing-only
+  synthetic: true
+  enabled: true
+
+values:
+  "1001": "Mx"
+  "1002": "Alex"
+  "1003": "Jordan"
+  "1004": "Example"
+  "1005": "14081995"
+  "1006": "ABCDE1234F"
+  "1007": "000000"
+  "1008":
+    - "+12025550101"
+    - "+12025550102"
+    - "+12025550103"
+  "1009":
+    - "alex.example@example.com"
+    - "alex.jordan@example.com"
+    - "test.profile@example.net"
+  "1020":
+    - "000000000001"
+    - "000000000002"
+    - "000000000003"
+  "1021":
+    - "TESTCUST0001"
+    - "TESTCUST0002"
+    - "TESTCUST0003"
+  "1023":
+    - "TESTCRN0001"
+    - "TESTCRN0002"
+    - "TESTCRN0003"
+  "1035":
+    - "ZZ00ZZ0000"
+    - "ZZ00ZZ0001"
+  "1036":
+    - "TESTCHASSIS000001"
+    - "TESTCHASSIS000002"

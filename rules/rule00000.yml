@@ -1,0 +1,26 @@
+# Reserved public test rule.
+# TEST ONLY — references the public synthetic test fixture.
+# Keep ID 00000 reserved. Normal rules begin at 00001.
+
+rule:
+  id: "00000"
+  name: "Public Synthetic Profile Test"
+  category: testing
+
+pattern:
+  fields:
+    - field_id: "1002"
+      slice:
+        mode: full
+    - field_id: "1005"
+      slice:
+        mode: last
+        count: 4
+
+transform:
+  cases:
+    - lower
+    - upper
+    - raw
+
+status: active
