@@ -163,5 +163,52 @@ class ScannerSafetyTests(unittest.TestCase):
         self.assertEqual(self.get_file_status(original), "missing")
 
 
+    def test_identical_file_on_another_root_is_not_misclassified_as_move(self):
+        original = self.create_pdf(self.source / "original.pdf")
+        first = scan(self.database, self.settings)
+
+        self.assertEqual(first["status"], "completed")
+        self.assertEqual(self.get_file_status(original), "present")
+
+        # Simulate drive A becoming unavailable while an identical copy
+        # appears on drive B.
+        offline_source = self.root / "offline-source"
+        self.source.rename(offline_source)
+
+        second_source = self.root / "second-source"
+        second_source.mkdir()
+        duplicate = self.create_pdf(
+            second_source / "original.pdf",
+            (offline_source / original.name).read_bytes(),
+        )
+
+        self.settings["scan"]["locations"] = [
+            str(self.source),
+            str(second_source),
+        ]
+
+        second = scan(self.database, self.settings)
+
+        self.assertEqual(second["status"], "partial")
+        self.assertGreater(second["errors"], 0)
+
+        # The old instance remains protected; the new path is a separate
+        # instance, not a move from the disconnected root.
+        self.assertEqual(self.get_file_status(original), "present")
+        self.assertEqual(self.get_file_status(duplicate), "present")
+
+        with connect(self.database) as db:
+            instances = db.execute(
+                "SELECT COUNT(*) FROM file_instances"
+            ).fetchone()[0]
+            moves = db.execute(
+                "SELECT COUNT(*) FROM document_events WHERE event_type = 'file_moved'"
+            ).fetchone()[0]
+
+        self.assertEqual(instances, 2)
+        self.assertEqual(moves, 0)
+
+
+
 if __name__ == "__main__":
     unittest.main()

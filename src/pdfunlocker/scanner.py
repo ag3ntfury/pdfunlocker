@@ -511,7 +511,7 @@ def scan(database_path, settings):
                     if existing_instance is None:
                         moved_instance_id = _try_record_move(
                             db, sha256, path_string, resolved.name,
-                            stat_after.st_size, stat_after.st_mtime, active_roots, scan_id,
+                            stat_after.st_size, stat_after.st_mtime, [root], scan_id,
                         )
                         if moved_instance_id is not None:
                             existing_instance = db.execute("""
