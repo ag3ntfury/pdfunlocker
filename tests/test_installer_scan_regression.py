@@ -216,6 +216,39 @@ class InstallerFlowTests(TemporaryTest):
         )
 
 
+    def test_profile_setup_completes_when_existing_order_is_not_confirmed(self):
+        install = self.root / ".pdfunlocker"
+        config = install / "config" / "settings.json"
+        database = install / "database" / "pdfunlocker.db"
+        config.parent.mkdir(parents=True)
+        config.write_text(json.dumps({"setup": {"completed": False}}))
+
+        from pdfunlocker.profiles.store import (
+            create_profile,
+            initialize_database,
+            list_profiles,
+        )
+
+        initialize_database(database)
+        create_profile(database, "Existing profile")
+
+        with patch(
+            "pdfunlocker.cli.profiles.prompt",
+            side_effect=["n", "n"],
+        ):
+            self.assertEqual(installer.run_profile_setup(install, config), 0)
+
+        settings = json.loads(config.read_text())
+        self.assertTrue(settings["setup"]["profile_configured"])
+        self.assertTrue(settings["setup"]["installer_stage_completed"])
+        self.assertTrue(settings["setup"]["completed"])
+        self.assertEqual(settings["setup"]["installer_stage"], "profile_configured")
+
+        profiles = list_profiles(database, include_disabled=False)
+        self.assertEqual(len(profiles), 1)
+        self.assertEqual(profiles[0]["name"], "Existing profile")
+        self.assertEqual(profiles[0]["execution_order"], 1)
+
     def test_setup_preserves_existing_settings_and_profile_files(self):
         source = Path(__file__).resolve().parents[1]
         install = self.root / ".pdfunlocker"

@@ -89,7 +89,7 @@ class ProfileInstallerStageTests(unittest.TestCase):
         self.assertFalse(settings["setup"].get("completed", False))
 
 
-    def test_unconfirmed_execution_order_keeps_installation_incomplete(self):
+    def test_unconfirmed_execution_order_keeps_existing_order_and_completes_setup(self):
         store.initialize_database(self.database)
         store.create_profile(self.database, "Existing")
 
@@ -99,10 +99,16 @@ class ProfileInstallerStageTests(unittest.TestCase):
         ):
             result = installer.run_profile_setup(self.install, self.config)
 
-        self.assertEqual(result, 1)
+        self.assertEqual(result, 0)
+
+        profiles = store.list_profiles(self.database)
+        self.assertEqual(len(profiles), 1)
+        self.assertEqual(profiles[0]["name"], "Existing")
+        self.assertEqual(profiles[0]["execution_order"], 1)
+
         settings = json.loads(self.config.read_text())
-        self.assertFalse(settings["setup"].get("completed", False))
-        self.assertFalse(settings["setup"].get("profile_configured", False))
+        self.assertTrue(settings["setup"].get("completed", False))
+        self.assertTrue(settings["setup"].get("profile_configured", False))
 
 
 if __name__ == "__main__":

@@ -380,11 +380,9 @@ def run_profile_setup(install_path, config_file):
         return 1
 
     confirmation = profile_cli.prompt("Confirm this execution order? [Y/n]: ")
-    if confirmation is None or confirmation.lower() not in ("", "y", "yes"):
-        print("Execution order not confirmed. Installation remains incomplete.")
-        print("Review the order with: pdfunlocker profile list")
-        print("Change it with: pdfunlocker profile edit PROFILE_ID")
-        return 1
+    if confirmation is None or confirmation.strip().lower() not in ("", "y", "yes"):
+        print("Keeping the existing profile execution order.")
+        print("You can change it later using: pdfunlocker profile edit PROFILE_ID")
 
     existing = load_settings(config_file)
     setup_state = dict(existing.get("setup", {}))
