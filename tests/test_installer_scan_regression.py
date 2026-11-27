@@ -135,7 +135,7 @@ class ApplicationCopyTests(TemporaryTest):
 
 
 class InstallerFlowTests(TemporaryTest):
-    def test_setup_finishes_after_scan_configuration_only(self):
+    def test_setup_finishes_when_optional_profile_is_skipped(self):
         source = Path(__file__).resolve().parents[1]
         install = self.root / ".pdfunlocker"
         public = self.root / "Documents" / "PDFUnlocker"
@@ -164,16 +164,57 @@ class InstallerFlowTests(TemporaryTest):
              patch.object(installer, "migrate_existing_database", return_value={
                  "database": install / "database/pdfunlocker.db",
                  "migrated_from": None,
-             }):
+             }), \
+             patch("pdfunlocker.cli.profiles.prompt", return_value="n"):
             self.assertEqual(installer.run_setup(), 0)
 
         settings = json.loads((install / "config/settings.json").read_text())
-        self.assertEqual(settings["setup"]["installer_stage"], "scan_configured")
+        self.assertEqual(settings["setup"]["installer_stage"], "setup_completed")
         self.assertTrue(settings["setup"]["scan_locations_configured"])
         self.assertFalse(settings["setup"]["profile_configured"])
-        self.assertFalse(settings["setup"]["completed"])
+        self.assertTrue(settings["setup"]["completed"])
         self.assertTrue((public / "Processed").is_dir())
         self.assertTrue((public / "Export").is_dir())
+
+    def test_setup_yes_invokes_existing_profile_setup(self):
+        source = Path(__file__).resolve().parents[1]
+        install = self.root / ".pdfunlocker"
+        public = self.root / "Documents" / "PDFUnlocker"
+        defaults = {
+            "environment": "linux",
+            "environment_name": "Linux",
+            "install_path": install,
+            "pdf_storage_root": public,
+            "processed": public / "Processed",
+            "exports": public / "Export",
+        }
+        scan = {
+            "locations": [str(self.root)],
+            "recursive": True,
+            "follow_symlinks": False,
+            "exclude_paths": [str(install), str(public)],
+            "location_exclusions": {},
+            "file_extensions": [".pdf"],
+            "duplicate_detection": "sha256",
+            "source_files": "never_modify",
+        }
+
+        with patch.object(installer, "get_default_paths", return_value=defaults), \
+             patch.object(installer, "_scan_settings", return_value=scan), \
+             patch.object(installer, "register_launcher", return_value=self.root / "bin/pdfunlocker"), \
+             patch.object(installer, "migrate_existing_database", return_value={
+                 "database": install / "database/pdfunlocker.db",
+                 "migrated_from": None,
+             }), \
+             patch("pdfunlocker.cli.profiles.prompt", return_value="yes"), \
+             patch.object(installer, "run_profile_setup", return_value=0) as profile_setup:
+            self.assertEqual(installer.run_setup(), 0)
+
+        profile_setup.assert_called_once_with(
+            install,
+            install / "config" / "settings.json",
+        )
+
 
     def test_setup_preserves_existing_settings_and_profile_files(self):
         source = Path(__file__).resolve().parents[1]
@@ -211,7 +252,8 @@ class InstallerFlowTests(TemporaryTest):
              patch.object(installer, "migrate_existing_database", return_value={
                  "database": install / "database/pdfunlocker.db",
                  "migrated_from": None,
-             }):
+             }), \
+             patch("pdfunlocker.cli.profiles.prompt", return_value="n"):
             self.assertEqual(installer.run_setup(), 0)
 
         settings = json.loads((install / "config/settings.json").read_text())

@@ -469,7 +469,7 @@ def run_setup(args=None):
         "installer_stage_completed": True,
         "installer_stage": "scan_configured",
         "database_initialized": migration["database"].is_file(),
-        "profile_configured": False,  # Alpha 1.3.3 deliberately stops before profile setup.
+        "profile_configured": bool(old_setup.get("profile_configured", False)),
         "completed": False,
     })
 
@@ -515,14 +515,81 @@ def run_setup(args=None):
     print(f"Launcher: {launcher}")
     print("Source PDFs were not moved, renamed or deleted.")
 
+    from pdfunlocker.cli import profiles as profile_cli
+
+    print()
+    print("===== OPTIONAL PROFILE SETUP =====")
+    print("You can add profiles now or later using: pdfunlocker profile add")
+
+    while True:
+        answer = profile_cli.prompt("Would you like to add a profile now? [Y/n]: ")
+
+        if answer is None:
+            answer = "n"
+
+        answer = answer.strip().lower()
+
+        if answer in ("", "y", "yes"):
+            return run_profile_setup(install_path, config_file)
+
+        if answer in ("n", "no"):
+            break
+
+        print("Please enter Y or N.")
+
+    existing = load_settings(config_file)
+    setup_state = dict(existing.get("setup", {}))
+    setup_state.update({
+        "paths_configured": True,
+        "scan_locations_configured": True,
+        "database_initialized": migration["database"].is_file(),
+        "profile_configured": bool(setup_state.get("profile_configured", False)),
+        "installer_stage": "setup_completed",
+        "installer_stage_completed": True,
+        "completed": True,
+    })
+
+    save_settings(config_file, {"setup": setup_state})
+
+    print()
+    print("Profile creation skipped.")
+    print("You can add a profile later using: pdfunlocker profile add")
+    print("Installation status: COMPLETE")
+    print("No PDF unlocking was started.")
+
     return 0
+
+
+def get_runtime_config():
+    """Locate the active configuration independently of the code checkout."""
+    source_install = Path(__file__).resolve().parents[3]
+    source_config = source_install / "config" / "settings.json"
+
+    if source_config.is_file():
+        return source_install, source_config
+
+    default_install = default_paths()["installation"]
+    default_config = default_install / "config" / "settings.json"
+
+    if default_config.is_file():
+        return default_install, default_config
+
+    return source_install, source_config
+
+
+def get_configured_installation(settings, fallback):
+    """Resolve the user-data installation recorded in application settings."""
+    configured = settings.get("paths", {}).get("installation")
+    if configured:
+        return Path(configured).expanduser().resolve()
+    return Path(fallback).expanduser().resolve()
 
 
 def run_scan_configure(args=None):
     """Change scan roots without reinstalling or changing other user data."""
-    install_path = Path(__file__).resolve().parents[3]
-    config_file = install_path / "config" / "settings.json"
+    fallback_install, config_file = get_runtime_config()
     settings = load_settings(config_file)
+    install_path = get_configured_installation(settings, fallback_install)
 
     environment = settings.get("environment")
     if environment not in ("android", "linux"):
@@ -560,6 +627,62 @@ def run_scan_configure(args=None):
     return 0
 
 
+def run_scan(args=None):
+    """Execute a discovery-only scan of configured PDF locations."""
+    from pdfunlocker.scanner import scan as scan_pdfs
+
+    fallback_install, config_file = get_runtime_config()
+    settings = load_settings(config_file)
+    install_path = get_configured_installation(settings, fallback_install)
+
+    if not settings:
+        raise RuntimeError(
+            "PDF Unlocker settings were not found. Run 'pdfunlocker setup' first."
+        )
+
+    scan_settings = settings.get("scan")
+    if not isinstance(scan_settings, dict) or not scan_settings.get("locations"):
+        raise RuntimeError(
+            "No scan locations are configured. Run 'pdfunlocker scan configure'."
+        )
+
+    resolved = resolve_paths(install_path, settings)
+    database = resolved["database"]
+
+    print()
+    print("PDF Unlocker — PDF Scan")
+    print("=======================")
+    print("Configured locations:")
+    for location in scan_settings["locations"]:
+        print(f"  {location}")
+
+    print()
+    print("Starting discovery scan...")
+    print("Original PDFs will not be moved, renamed or deleted.")
+    print("No password attempts will be performed.")
+
+    result = scan_pdfs(database, settings)
+
+    print()
+    print("===== SCAN RESULTS =====")
+    print(f"Scan ID:          {result['scan_id']}")
+    print(f"Status:           {result['status']}")
+    print(f"PDFs discovered:  {result['files_seen']}")
+    print(f"PDFs hashed:      {result['files_hashed']}")
+    print(f"Scan errors:      {result['errors']}")
+    print(f"Duplicate groups: {result['duplicate_groups']}")
+    print(f"Database:         {database}")
+
+    if result["status"] == "partial":
+        print()
+        print("WARNING: Some locations or files could not be scanned.")
+        print("Review scan_errors in the database before processing.")
+
+    print()
+    print("Scan completed. No PDF unlocking was started.")
+    return 0
+
+
 def run_database_export(args=None):
     install_path = Path(__file__).resolve().parents[3]
     settings = load_settings(install_path / "config" / "settings.json")
@@ -587,9 +710,20 @@ def main():
     install_parser = subparsers.add_parser("install", help="Alias for automatic setup")
     install_parser.set_defaults(func=run_setup)
 
-    scan_parser = subparsers.add_parser("scan", help="Manage PDF scan locations")
-    scan_commands = scan_parser.add_subparsers(dest="scan_command", required=True)
-    configure_parser = scan_commands.add_parser("configure", help="Change scan locations")
+    scan_parser = subparsers.add_parser(
+        "scan",
+        help="Scan configured folders for PDF files",
+    )
+    scan_parser.set_defaults(func=run_scan)
+
+    scan_commands = scan_parser.add_subparsers(
+        dest="scan_command",
+        required=False,
+    )
+    configure_parser = scan_commands.add_parser(
+        "configure",
+        help="Change scan locations",
+    )
     configure_parser.set_defaults(func=run_scan_configure)
 
     add_profile_commands(subparsers)
